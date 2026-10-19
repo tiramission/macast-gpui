@@ -542,7 +542,7 @@ crates.io 上的 `gpui 0.2.2` 是**裁剪版**，和 Zed 主仓的 gpui 不是�
 3. **播放器插件化**：把 `Player` trait 的具械做成"渲染器插件"（对应 Macast-plugins 的思路：IINA/PotPlayer/外部命令），用 dlopen 或子进程 + 简单 RPC
 4. **AirPlay 接收**：协议完全不同（mDNS + FairPlay + NTP），工作量大；可评估集成 `rust-airplay` 类项目或 fork Macast 的音频方案
 5. **Chromecast**：mDNS + CASTV2 over TLS，更重；通常不值得从零做
-6. **视频嵌入 gpui 窗口**：`rsmpv` 的 render API 出帧 → wgpu 纹理 → gpui 自定义 Element；替代独立 mpv 窗口
+6. **视频嵌入 gpui 窗口**（已立项，见 `docs/plan-builtin-backend.md`）：crates.io gpui 0.2.2 的 `surface` 元素 Windows 上是空壳，走 **子 HWND 内嵌 + Windows Media Foundation** 路线；Player 层抽象出 `VideoHost` trait，详见计划文档
 7. **投屏历史 / 自动续播**：`GetPositionInfo` 已有数据，UI 层加个列表即可
 
 ---
