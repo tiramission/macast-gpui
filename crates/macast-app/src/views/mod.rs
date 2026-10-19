@@ -12,7 +12,9 @@
 use alhazen_gpui::{Source, VideoPlayer};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use macast_core::{Config, MacastCore, PlaybackSnapshot, PlayerKind, Theme, TransportState};
+use macast_core::{
+    Config, MacastCore, MpvRenderMode, PlaybackSnapshot, PlayerKind, Theme, TransportState,
+};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -347,22 +349,22 @@ impl RootView {
     }
 
     fn set_player(&mut self, kind: PlayerKind, cx: &mut Context<Self>) {
-        if self.config.player != kind {
-            self.config.player = kind;
+        if self.config.player.kind != kind {
+            self.config.player.kind = kind;
             self.save_config("播放后端", cx);
         }
     }
 
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
-        self.config.mpv_fullscreen = !self.config.mpv_fullscreen;
+        self.config.player.fullscreen_on_cast = !self.config.player.fullscreen_on_cast;
         self.save_config("投屏全屏", cx);
     }
 
     fn toggle_tray(&mut self, cx: &mut Context<Self>) {
-        self.config.tray_enabled = !self.config.tray_enabled;
+        self.config.ui.tray_enabled = !self.config.ui.tray_enabled;
         match self.config.save() {
             Ok(()) => {
-                let label = if self.config.tray_enabled {
+                let label = if self.config.ui.tray_enabled {
                     "开启"
                 } else {
                     "关闭"
@@ -375,10 +377,10 @@ impl RootView {
     }
 
     fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
-        if self.config.theme == theme {
+        if self.config.ui.theme == theme {
             return;
         }
-        self.config.theme = theme;
+        self.config.ui.theme = theme;
         match self.config.save() {
             Ok(()) => {
                 let label = match theme {
@@ -445,7 +447,7 @@ impl RootView {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = match self.config.theme {
+        let palette = match self.config.ui.theme {
             Theme::Light => Palette::LIGHT,
             Theme::Dark => Palette::DARK,
             Theme::Auto => match window.appearance() {
@@ -484,11 +486,12 @@ impl Render for RootView {
         } else {
             self.esc_was_down = false;
         }
-        let is_alhazen = runtime_backend == "alhazen" || self.config.player == PlayerKind::Alhazen;
+        let is_alhazen =
+            runtime_backend == "alhazen" || self.config.player.kind == PlayerKind::Alhazen;
 
         // Alhazen backend: create a VideoPlayer entity for the current cast.
         // When fullscreen is enabled, make the gpui window fullscreen too.
-        if is_alhazen && self.config.mpv_fullscreen {
+        if is_alhazen && self.config.player.fullscreen_on_cast {
             let new_cast = has_media && s.cast_seq != self.last_cast_seq;
             if new_cast && !window.is_fullscreen() {
                 window.toggle_fullscreen();
@@ -1230,39 +1233,55 @@ fn settings_panel(
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
     let mpv_path = config
-        .mpv_path
+        .player
+        .mpv
+        .exe_path
         .as_ref()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "自动（PATH 中的 mpv）".to_string());
+    // Embedded (libmpv) is not wired up yet - see docs/plan-inwindow-mpv.md.
+    let render_mode = match config.player.render_mode {
+        MpvRenderMode::Auto => "自动（暂用外部 mpv 窗口）",
+        MpvRenderMode::External => "外部 mpv 窗口",
+        MpvRenderMode::Embedded => "窗口内渲染（libmpv，待实现）",
+    };
 
-    // 播放 section: mpv 路径仅对 mpv 后端显示；内置后端显示解码器说明。
+    // 播放 section: mpv 相关行只在 mpv 后端显示。
     let play_rows: Vec<Div> = {
         let mut rows = vec![
             setting_row("当前运行", div().child(runtime_backend.to_string())),
-            setting_row("启动后端", segmented_player(config.player, cx)),
+            setting_row("启动后端", segmented_player(config.player.kind, cx)),
         ];
-        match config.player {
+        match config.player.kind {
             PlayerKind::Alhazen => rows.push(
                 div()
                     .text_size(px(10.5))
                     .line_height(px(16.0))
                     .text_color(rgb(p().dim))
-                    .child("内置后端使用系统解码器（H.264/AAC）；HEVC 需要系统「HEVC 视频扩展」。"),
+                    .child("进程内解码，画面直接画在窗口内；H.264/AAC 开箱可用，HEVC 需系统「HEVC 视频扩展」。"),
             ),
-            _ => rows.push(setting_row(
-                "mpv 路径",
-                div()
-                    .w(px(190.0))
-                    .truncate()
-                    .text_color(rgb(p().muted))
-                    .child(mpv_path),
-            )),
+            PlayerKind::Mpv => {
+                rows.push(setting_row(
+                    "mpv 程序",
+                    div()
+                        .w(px(190.0))
+                        .truncate()
+                        .text_color(rgb(p().muted))
+                        .child(mpv_path),
+                ));
+                rows.push(setting_row(
+                    "渲染方式",
+                    div()
+                        .text_color(rgb(p().muted))
+                        .child(render_mode),
+                ));
+            }
         }
         rows.push(setting_row(
             "投屏时全屏",
             switch(
                 "switch-fullscreen",
-                config.mpv_fullscreen,
+                config.player.fullscreen_on_cast,
                 cx.listener(|this, _, _, cx| this.toggle_fullscreen(cx)),
             ),
         ));
@@ -1280,7 +1299,7 @@ fn settings_panel(
         .child(section("播放", play_rows))
         .child(section(
             "外观",
-            vec![setting_row("主题", segmented_theme(config.theme, cx))],
+            vec![setting_row("主题", segmented_theme(config.ui.theme, cx))],
         ))
         .child(section(
             "系统",
@@ -1289,7 +1308,7 @@ fn settings_panel(
                     "系统托盘",
                     switch(
                         "switch-tray",
-                        config.tray_enabled,
+                        config.ui.tray_enabled,
                         cx.listener(|this, _, _, cx| this.toggle_tray(cx)),
                     ),
                 ),
@@ -1315,13 +1334,13 @@ fn settings_panel(
         .child(section(
             "设备",
             vec![
-                setting_row("名称", div().child(config.friendly_name.clone())),
+                setting_row("名称", div().child(config.device.friendly_name.clone())),
                 setting_row(
                     "端口",
-                    div().child(if config.port == actual_port {
+                    div().child(if config.device.port == actual_port {
                         format!("{actual_port}")
                     } else {
-                        format!("{} → {}", config.port, actual_port)
+                        format!("{} → {}", config.device.port, actual_port)
                     }),
                 ),
                 setting_row(

@@ -1,7 +1,9 @@
 # 实施方案：mpv 后端窗口内渲染（libmpv SW render）
 
-> 状态：**待实施**（已验证关键 API 可用性）
+> 状态：**待实施**（配置已就位，渲染部分未实现）
 > 目标：让 mpv 后端的画面也画在 gpui 窗口内（与 alhazen 后端体验一致），不再弹外部播放器窗口。
+> **约束（2026-10-20）**：**不新增后端**。`PlayerKind` 仍只有 `alhazen` / `mpv`，窗口内渲染是
+> mpv 后端的一个属性，由 `player.render_mode`（`auto` / `external` / `embedded`）控制。
 > 相关：README「已知边界 / Roadmap」中的「mpv 后端也走窗口内渲染」、`docs/plan-builtin-backend.md`（前一次内嵌尝试）。
 
 ## 1. 结论摘要
@@ -15,10 +17,10 @@
 | 后端 | 形态 | 需要 | 画面位置 |
 |:---|:---|:---|:---|
 | `mpv`（现有） | 外部进程 + JSON IPC | `mpv.exe`（或 `mpv_path`） | mpv 自己的窗口 |
-| `libmpv`（本方案新增） | 进程内库 + SW render | `libmpv-2.dll`（或 `libmpv_path`） | **gpui 窗口内** |
+| `mpv` + `render_mode=embedded` | 进程内库 + SW render | `libmpv-2.dll`（或 `player.mpv.libmpv_path`） | **gpui 窗口内** |
 | `alhazen`（现有，默认） | 进程内解码 | 无外部依赖 | gpui 窗口内 |
 
-- **libmpv 后端不需要 `mpv.exe`**：它是 mpv 的库版本，直接加载 `libmpv-2.dll` 在进程内跑
+- **`embedded` 模式不需要 `mpv.exe`**：它是 mpv 的库版本，直接加载 `libmpv-2.dll` 在进程内跑
 - 现有 `mpv` 后端**保留不动**：用户已装 mpv.exe 时它仍可用，且不需要 DLL
 - `config.mpv_path` 语义不变（指向 mpv.exe）；新增 `libmpv_path` 指向 DLL，互不干扰
 
@@ -95,16 +97,22 @@ pub trait VideoHost: Send + Sync {
 
 （`NullVideoHost` 用于 alhazen，`frame()` 返回 `None`、`set_render_size` 空实现，不受影响。）
 
-**core `config.rs`**：
+**core `config.rs`（已实现）**：
 
 ```rust
-pub enum PlayerKind { Alhazen, Mpv, Libmpv }   // #[default] Alhazen 不变
+pub enum PlayerKind { Alhazen, Mpv }            // 不变，#[default] Alhazen
+pub enum MpvRenderMode { Auto, External, Embedded }
 
-pub struct Config {
-    // ...
-    pub libmpv_path: Option<PathBuf>,   // 新增，默认 None
+pub struct PlayerConfig {
+    pub kind: PlayerKind,
+    pub fullscreen_on_cast: bool,
+    pub render_mode: MpvRenderMode,   // 新增
+    pub mpv: MpvConfig { exe_path: Option<PathBuf>, libmpv_path: Option<PathBuf> },
 }
 ```
+
+`build_player(&PlayerConfig, video_host)` 按 `render_mode` 选择实现；`Embedded` 未接线前
+和 `Auto`/`External` 一样走外部 mpv 进程。
 
 **core `player/mod.rs`**：`build_player` 增加 `PlayerKind::Libmpv => libmpv::LibmpvPlayer::new(host)`；
 host 缺失或 DLL 加载失败时返回错误（**不回退 null**——按用户要求已取消回退逻辑，设置面板明确提示）。
@@ -145,14 +153,14 @@ paint 前后调用 `mpv_render_context_update(ctx)` 判断是否 `MPV_RENDER_UPD
 
 ### 3.4 DLL 探测顺序（Windows）
 
-1. `config.libmpv_path`（若配置且文件存在）
+1. `player.mpv.libmpv_path`（若配置且文件存在）
 2. 环境变量 `MACAST_LIBMPV`
 3. exe 同目录 `libmpv-2.dll`
 4. `PATH` 中的 `libmpv-2.dll` / `mpv-2.dll`
 5. 常见安装位置：`%LOCALAPPDATA%\Programs\Scoop\apps\libmpv\current\libmpv-2.dll`、
    `%LOCALAPPDATA%\Programs\Scoop\apps\mpv\current\libmpv-2.dll`
 
-全部找不到 → 后端不可用，设置面板显示"未找到 libmpv-2.dll，请在配置中指定 libmpv_path"。
+全部找不到 → 回落到外部 mpv 进程（`Auto`），或在 `Embedded` 下明确报错"未找到 libmpv-2.dll，请在配置中指定 player.mpv.libmpv_path"。
 
 ## 4. 实施里程碑
 
@@ -160,7 +168,7 @@ paint 前后调用 `mpv_render_context_update(ctx)` 判断是否 `MPV_RENDER_UPD
 
 | 里程碑 | 内容 | 验证方式 |
 |:---|:---|:---|
-| **M0** 配置与接线 | `PlayerKind::Libmpv`、`libmpv_path`、`VideoHost` 加 `frame`/`set_render_size`、`NullVideoHost` 适配、设置面板加选项 | `cargo test`；设置面板能选到 libmpv 并写入 config |
+| **M0** 配置与接线 | ✅ 已完成（2026-10-20）：配置改为 `device`/`player`/`ui`/`network` 分组，新增 `MpvRenderMode` 与 `mpv.exe_path`/`mpv.libmpv_path`，设置面板显示 mpv 程序与渲染方式 | `cargo test` 23 项通过；删除旧配置后启动生成新结构 |
 | **M1** libmpv 取帧（脱离 UI） | `libmpv2-sys` FFI 封装：加载 DLL、创建 handle、SW render 到 buffer | 写一个小 demo/测试：投一个本地视频，把收到的帧存成 PNG，肉眼确认画面正确 |
 | **M2** core 侧 Player | `player/libmpv.rs`：命令转发 + 事件回传（`Loaded/Position/Duration/Playing/Paused/Stopped/Ended/Volume/Mute`） | SOAP 投屏，`GetTransportInfo` / `GetPositionInfo` 状态与进度正确 |
 | **M3** gpui 渲染 | `mpv_view.rs` Element + RootView 在 libmpv 后端时用它替代 artwork | 实机：画面出现在 hero 卡内，无外部窗口 |
@@ -187,7 +195,7 @@ paint 前后调用 `mpv_render_context_update(ctx)` 判断是否 `MPV_RENDER_UPD
 
 | 风险 | 缓解 |
 |:---|:---|
-| 121 MB DLL 分发 | **已定：不打包**，由 `libmpv_path` 指定；找不到时明确提示而非静默失败 |
+| 121 MB DLL 分发 | **已定：不打包**，由 `player.mpv.libmpv_path` 指定；找不到时明确提示而非静默失败 |
 | mpv 版本 API 差异 | 加载后校验必需符号（`mpv_render_context_create/render/report_swap`），缺失则报错 |
 | SW render 是软件色彩转换，CPU 占用高 | 限制渲染尺寸到显示大小；必要时允许 `--gpu-context` 之外的 hwdec 回读路径 |
 | 与现有 mpv 后端并存导致混淆 | 设置面板分别说明："mpv（外部窗口，需 mpv.exe）" / "libmpv（窗口内，需 libmpv-2.dll）" |
@@ -196,6 +204,6 @@ paint 前后调用 `mpv_render_context_update(ctx)` 判断是否 `MPV_RENDER_UPD
 
 ## 7. 待确认
 
-- 是否允许 libmpv 后端使用 GPU 解码（`hwdec=auto`）后 **GPU→CPU 回读**？理论上更快，但 mpv 的 hwdec + SW render 组合需要实测是否稳定
+- 是否允许 embedded 模式使用 GPU 解码（`hwdec=auto`）后 **GPU→CPU 回读**？理论上更快，但 mpv 的 hwdec + SW render 组合需要实测是否稳定
 - 字幕 / 音轨支持：mpv 引擎本身支持，MVP 阶段不接 UI 控件
 - 是否需要把 libmpv 也用于纯音频（无视频时显示 artwork，复用 alhazen 的 `has_video` 判定思路）

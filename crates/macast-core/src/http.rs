@@ -168,7 +168,7 @@ async fn status_page(State(engine): State<Arc<Engine>>) -> Response {
     let snap: PlaybackSnapshot = engine.snapshot_tx.borrow().clone();
     let json = serde_json::to_string_pretty(&serde_json::json!({
         "friendly_name": snap.friendly_name,
-        "udn": engine.config.udn,
+        "udn": engine.config.device.udn,
         "port": snap.port,
         "ips": snap.ips,
         "player": engine.player.name(),

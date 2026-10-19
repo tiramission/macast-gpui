@@ -77,7 +77,7 @@ impl Engine {
     }
 
     pub fn description_xml(&self) -> String {
-        description_xml(&self.config.udn, &self.config.friendly_name)
+        description_xml(&self.config.device.udn, &self.config.device.friendly_name)
     }
 
     pub async fn shutdown(&self) {
@@ -100,17 +100,11 @@ impl MacastCore {
         config: Config,
         video_host: Option<Arc<dyn player::video_host::VideoHost>>,
     ) -> anyhow::Result<Arc<Self>> {
-        let player = player::build_player(
-            config.player,
-            config.mpv_path.clone(),
-            config.mpv_fullscreen,
-            video_host,
-        )
-        .await;
+        let player = player::build_player(&config.player, video_host).await;
         let events = Arc::new(EventRegistry::new(SERVER_STRING));
         let (snapshot_tx, _) = watch::channel(PlaybackSnapshot {
-            friendly_name: config.friendly_name.clone(),
-            port: config.port,
+            friendly_name: config.device.friendly_name.clone(),
+            port: config.device.port,
             ..Default::default()
         });
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -130,16 +124,17 @@ impl MacastCore {
         });
 
         // ---- HTTP server -------------------------------------------------
-        let listener = match tokio::net::TcpListener::bind(("0.0.0.0", engine.config.port)).await {
-            Ok(l) => l,
-            Err(e) => {
-                tracing::warn!(
-                    "cannot bind port {} ({e}); falling back to an ephemeral port",
-                    engine.config.port
-                );
-                tokio::net::TcpListener::bind(("0.0.0.0", 0)).await?
-            }
-        };
+        let listener =
+            match tokio::net::TcpListener::bind(("0.0.0.0", engine.config.device.port)).await {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::warn!(
+                        "cannot bind port {} ({e}); falling back to an ephemeral port",
+                        engine.config.device.port
+                    );
+                    tokio::net::TcpListener::bind(("0.0.0.0", 0)).await?
+                }
+            };
         let port = listener.local_addr()?.port();
         engine.set_actual_port(port);
         engine.update_snapshot(|s| s.port = port).await;

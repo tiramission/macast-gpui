@@ -151,7 +151,7 @@ fn main() {
         // Windows: system tray. When `tray_enabled` is true, closing the
         // window hides it to the tray; otherwise the window close quits.
         #[cfg(target_os = "windows")]
-        if core.engine.config.tray_enabled {
+        if core.engine.config.ui.tray_enabled {
             let any: AnyWindowHandle = window.into();
             match tray::start(any, cx) {
                 Ok(()) => {

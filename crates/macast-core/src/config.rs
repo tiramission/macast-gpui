@@ -4,21 +4,45 @@
 //! - Windows: `%APPDATA%\macast-gpui\config.json`
 //! - macOS:   `~/Library/Application Support/macast-gpui/config.json`
 //! - Linux:   `~/.config/macast-gpui/config.json`
+//!
+//! The file is grouped (`device` / `player` / `ui` / `network`) so related
+//! settings live together; every group has defaults, so a config file only
+//! needs to spell out what differs.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::info;
 use uuid::Uuid;
 
-/// Which player backend receives the media.
+/// Which player engine receives the media.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayerKind {
-    /// External mpv process, driven through its JSON IPC socket.
+    /// mpv: an external `mpv` process over its JSON IPC socket, or libmpv
+    /// rendering inside the app window (see [`MpvRenderMode`]).
     Mpv,
-    /// Pure-Rust media player engine (alhazen-core) — default.
+    /// Pure-Rust media player engine (alhazen-core) - default.
     #[default]
     Alhazen,
+}
+
+/// How the mpv engine produces pictures.
+///
+/// A property of the mpv backend, not a separate backend: both modes drive
+/// the same engine, only where the picture ends up differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MpvRenderMode {
+    /// Use libmpv inside the app window when `libmpv-2.dll` can be found,
+    /// otherwise fall back to the external mpv process.
+    #[default]
+    Auto,
+    /// Spawn `mpv` and drive it over its JSON IPC socket; needs `mpv`
+    /// (or an explicit `exe_path`).
+    External,
+    /// Load `libmpv-2.dll` in-process and render into the app window; needs
+    /// the DLL (or an explicit `libmpv_path`).
+    Embedded,
 }
 
 /// Window colour theme. `Auto` follows the OS appearance.
@@ -31,35 +55,117 @@ pub enum Theme {
     Dark,
 }
 
+/// How this renderer presents itself on the network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    /// Stable device UUID (persisted so phones remember the device across restarts).
+pub struct DeviceConfig {
+    /// Stable device UUID (persisted so phones remember the device).
     pub udn: String,
     /// Name shown in the phone's cast list.
     pub friendly_name: String,
-    /// Preferred HTTP port. `0` = let the OS pick (the real port is reported in the UI).
+    /// Preferred HTTP port. `0` = let the OS pick (the real port is shown in the UI).
     pub port: u16,
+}
+
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        Self {
+            udn: format!("{}", Uuid::new_v4()),
+            friendly_name: default_friendly_name(),
+            port: 5069,
+        }
+    }
+}
+
+/// mpv executable / library locations. Both optional: `None` means "look it up".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MpvConfig {
+    /// Path to the mpv executable (external mode). `None` = look it up on `PATH`.
     #[serde(default)]
-    pub player: PlayerKind,
-    /// Path to the mpv executable. `None` = look it up on `PATH`.
+    pub exe_path: Option<PathBuf>,
+    /// Path to `libmpv-2.dll` (embedded mode). `None` = probe the usual places.
     #[serde(default)]
-    pub mpv_path: Option<PathBuf>,
-    /// Open the mpv window fullscreen when a cast starts.
+    pub libmpv_path: Option<PathBuf>,
+}
+
+/// Which engine plays, and how the picture is shown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerConfig {
+    /// Engine to use.
+    #[serde(default)]
+    pub kind: PlayerKind,
+    /// Enter fullscreen when a cast starts (Esc leaves fullscreen again).
     #[serde(default = "default_true")]
-    pub mpv_fullscreen: bool,
-    /// Window colour theme; `auto` follows the OS.
+    pub fullscreen_on_cast: bool,
+    /// mpv display mode; ignored when `kind` is not `mpv`.
+    #[serde(default)]
+    pub render_mode: MpvRenderMode,
+    /// mpv executable / library locations.
+    #[serde(default)]
+    pub mpv: MpvConfig,
+}
+
+impl Default for PlayerConfig {
+    fn default() -> Self {
+        Self {
+            kind: PlayerKind::Alhazen,
+            fullscreen_on_cast: true,
+            render_mode: MpvRenderMode::Auto,
+            mpv: MpvConfig::default(),
+        }
+    }
+}
+
+/// Window appearance and shell integration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiConfig {
+    /// Colour theme; `auto` follows the OS.
     #[serde(default)]
     pub theme: Theme,
+    /// Show the system tray icon; closing the window hides to tray instead of
+    /// quitting. When `false`, closing the window exits the app.
+    #[serde(default = "default_true")]
+    pub tray_enabled: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: Theme::Auto,
+            tray_enabled: true,
+        }
+    }
+}
+
+/// SSDP announcement tuning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
     /// Seconds between SSDP `ssdp:alive` announcements.
     #[serde(default = "default_notify_secs")]
     pub ssdp_notify_secs: u64,
     /// `CACHE-CONTROL: max-age` advertised in SSDP announcements.
     #[serde(default = "default_max_age")]
     pub max_age: u32,
-    /// Show the system tray icon; closing the window hides to tray instead
-    /// of quitting. When `false`, closing the window exits the app.
-    #[serde(default = "default_true")]
-    pub tray_enabled: bool,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            ssdp_notify_secs: default_notify_secs(),
+            max_age: default_max_age(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Config {
+    #[serde(default)]
+    pub device: DeviceConfig,
+    #[serde(default)]
+    pub player: PlayerConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
+    #[serde(default)]
+    pub network: NetworkConfig,
 }
 
 fn default_notify_secs() -> u64 {
@@ -72,23 +178,6 @@ fn default_max_age() -> u32 {
 
 fn default_true() -> bool {
     true
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            udn: format!("{}", Uuid::new_v4()),
-            friendly_name: default_friendly_name(),
-            port: 5069,
-            player: PlayerKind::Alhazen,
-            mpv_path: None,
-            mpv_fullscreen: true,
-            theme: Theme::Auto,
-            ssdp_notify_secs: default_notify_secs(),
-            max_age: default_max_age(),
-            tray_enabled: true,
-        }
-    }
 }
 
 fn default_friendly_name() -> String {
@@ -156,30 +245,36 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("macast-gpui-test-{}", Uuid::new_v4()));
         let path = dir.join("config.json");
 
-        let cfg = Config {
-            friendly_name: "客厅电视".into(),
-            port: 5069,
-            player: PlayerKind::Alhazen,
-            ..Default::default()
-        };
+        let mut cfg = Config::default();
+        cfg.device.friendly_name = "客厅电视".into();
+        cfg.player.kind = PlayerKind::Mpv;
+        cfg.player.render_mode = MpvRenderMode::Embedded;
         cfg.save_to(&path).expect("save");
 
         let loaded = Config::load_from(&path);
-        assert_eq!(loaded.udn, cfg.udn);
-        assert_eq!(loaded.friendly_name, "客厅电视");
-        assert_eq!(loaded.player, PlayerKind::Alhazen);
+        assert_eq!(loaded.device.udn, cfg.device.udn);
+        assert_eq!(loaded.device.friendly_name, "客厅电视");
+        assert_eq!(loaded.player.kind, PlayerKind::Mpv);
+        assert_eq!(loaded.player.render_mode, MpvRenderMode::Embedded);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn missing_optional_fields_fall_back_to_defaults() {
-        let cfg: Config = serde_json::from_str(r#"{"udn":"u","friendly_name":"n","port":0}"#)
-            .expect("legacy config parses");
-        assert_eq!(cfg.player, PlayerKind::Alhazen);
-        assert!(cfg.mpv_fullscreen);
-        assert_eq!(cfg.theme, Theme::Auto);
-        assert_eq!(cfg.ssdp_notify_secs, 30);
-        assert_eq!(cfg.max_age, 1800);
+    fn empty_object_falls_back_to_defaults() {
+        let cfg: Config = serde_json::from_str("{}").expect("empty config parses");
+        assert_eq!(cfg.player.kind, PlayerKind::Alhazen);
+        assert!(cfg.player.fullscreen_on_cast);
+        assert_eq!(cfg.player.render_mode, MpvRenderMode::Auto);
+        assert_eq!(cfg.ui.theme, Theme::Auto);
+        assert!(cfg.ui.tray_enabled);
+        assert_eq!(cfg.network.ssdp_notify_secs, 30);
+        assert_eq!(cfg.network.max_age, 1800);
+        assert_eq!(cfg.device.port, 5069);
+    }
+
+    #[test]
+    fn two_defaults_get_distinct_udns() {
+        assert_ne!(Config::default().device.udn, Config::default().device.udn);
     }
 }

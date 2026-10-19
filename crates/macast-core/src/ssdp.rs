@@ -178,7 +178,7 @@ impl SsdpServer {
             .update_snapshot(|s| {
                 s.ips = ips;
                 s.port = port;
-                s.friendly_name = self.engine.config.friendly_name.clone();
+                s.friendly_name = self.engine.config.device.friendly_name.clone();
             })
             .await;
         let _ = ifaces_for_engine;
@@ -207,7 +207,7 @@ impl SsdpServer {
              ST: {st}\r\n\
              USN: {usn}\r\n\
              \r\n",
-            max_age = self.engine.config.max_age,
+            max_age = self.engine.config.network.max_age,
             date = http_date_now(),
             server = crate::device::SERVER_STRING,
         )
@@ -238,7 +238,7 @@ impl SsdpServer {
                  SERVER: {server}\r\n\
                  USN: {usn}\r\n\
                  \r\n",
-                max_age = self.engine.config.max_age,
+                max_age = self.engine.config.network.max_age,
                 server = crate::device::SERVER_STRING,
             )
         }
@@ -292,7 +292,7 @@ impl SsdpServer {
                 continue;
             }
 
-            let pairs: Vec<(String, String)> = usn_pairs(&self.engine.config.udn)
+            let pairs: Vec<(String, String)> = usn_pairs(&self.engine.config.device.udn)
                 .into_iter()
                 .filter(|(_, st)| req.st == "ssdp:all" || *st == req.st)
                 .collect();
@@ -321,8 +321,8 @@ impl SsdpServer {
 
     async fn notifier(self: Arc<Self>, send_socks: Vec<(Iface, Arc<UdpSocket>)>) {
         let mut shutdown = self.shutdown.clone();
-        let pairs = usn_pairs(&self.engine.config.udn);
-        let interval = Duration::from_secs(self.engine.config.ssdp_notify_secs.max(1));
+        let pairs = usn_pairs(&self.engine.config.device.udn);
+        let interval = Duration::from_secs(self.engine.config.network.ssdp_notify_secs.max(1));
 
         // Announce immediately (twice, as recommended by the spec).
         for round in 0..2 {

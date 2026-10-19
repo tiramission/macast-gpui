@@ -9,8 +9,7 @@ pub mod alhazen;
 pub mod mpv;
 pub mod video_host;
 
-use crate::config::PlayerKind;
-use std::path::PathBuf;
+use crate::config::{PlayerConfig, PlayerKind};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use video_host::VideoHost;
@@ -65,19 +64,30 @@ pub trait Player: Send + Sync + 'static {
 /// `video_host` is provided by the UI process and is required by the built-in
 /// (Media Foundation) backend; without it that backend falls back to null.
 pub async fn build_player(
-    kind: PlayerKind,
-    mpv_path: Option<PathBuf>,
-    fullscreen: bool,
+    config: &PlayerConfig,
     video_host: Option<Arc<dyn VideoHost>>,
 ) -> Arc<dyn Player> {
-    match kind {
-        PlayerKind::Mpv => match mpv::MpvPlayer::spawn(mpv_path, fullscreen).await {
-            Ok(p) => Arc::new(p),
-            Err(e) => {
-                tracing::error!("failed to start mpv backend ({e})");
-                Arc::new(alhazen::AlhazenPlayer::new(video_host, fullscreen))
+    match config.kind {
+        // `Embedded` (libmpv in the app window) is not wired up yet: Auto and
+        // External both drive an external mpv process for now. See
+        // docs/plan-inwindow-mpv.md.
+        PlayerKind::Mpv => {
+            match mpv::MpvPlayer::spawn(config.mpv.exe_path.clone(), config.fullscreen_on_cast)
+                .await
+            {
+                Ok(p) => Arc::new(p),
+                Err(e) => {
+                    tracing::error!("failed to start mpv backend ({e})");
+                    Arc::new(alhazen::AlhazenPlayer::new(
+                        video_host,
+                        config.fullscreen_on_cast,
+                    ))
+                }
             }
-        },
-        PlayerKind::Alhazen => Arc::new(alhazen::AlhazenPlayer::new(video_host, fullscreen)),
+        }
+        PlayerKind::Alhazen => Arc::new(alhazen::AlhazenPlayer::new(
+            video_host,
+            config.fullscreen_on_cast,
+        )),
     }
 }

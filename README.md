@@ -57,18 +57,33 @@ cargo run -p macast-app
 
 ```json
 {
-  "udn": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "friendly_name": "Macast-Gpui(你的电脑名)",
-  "port": 5069,
-  "player": "alhazen",  # "alhazen"（默认，窗口内渲染）/ "mpv"
-  "mpv_path": null,
-  "mpv_fullscreen": true,
-  "theme": "auto",        # "auto" / "light" / "dark"
-  "tray_enabled": true,   # false：不常驻托盘，关窗即退出
-  "ssdp_notify_secs": 30,
-  "max_age": 1800
+  "device": {
+    "udn": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "friendly_name": "Macast-Gpui(你的电脑名)",
+    "port": 5069
+  },
+  "player": {
+    "kind": "alhazen",            // "alhazen"（默认，窗口内渲染）/ "mpv"
+    "fullscreen_on_cast": true,   // 每次投屏全屏，Esc 退出全屏（不影响播放）
+    "render_mode": "auto",        // mpv 的显示方式：auto / external / embedded
+    "mpv": {
+      "exe_path": null,           // mpv 程序路径；null = PATH 中查找
+      "libmpv_path": null         // libmpv-2.dll 路径（embedded 模式用）
+    }
+  },
+  "ui": {
+    "theme": "auto",              // "auto" / "light" / "dark"
+    "tray_enabled": true          // false：不常驻托盘，关窗即退出
+  },
+  "network": {
+    "ssdp_notify_secs": 30,
+    "max_age": 1800
+  }
 }
 ```
+
+> 配置按 `device` / `player` / `ui` / `network` 分组，每组都有默认值，文件里只需要写要改的项。
+> `player.render_mode` 目前只有 `external`（外部 mpv 窗口）真正生效，`embedded`（窗口内渲染）的实现方案见 [docs/plan-inwindow-mpv.md](docs/plan-inwindow-mpv.md)。
 
 ### 测试投屏
 
