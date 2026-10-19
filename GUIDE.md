@@ -438,7 +438,7 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | 核心单元测试 | `cargo test -p macast-core` | 11 passed（时间解析、HTTP 日期、DIDL、SOAP、配置读写） |
 | 应用编译 | `cargo check -p macast-app -j 2` / `cargo build` | 通过 |
 | 启动冒烟 | 运行 `target/debug/macast-app.exe` | 窗口/HTTP/SSDP 正常；无 mpv 时自动回退 null 并打日志 |
-| 托盘常驻 | 日志确认 `tray icon created`；对进程发送 WM_CLOSE | 进程存活，窗口隐藏（MainWindowHandle=0），关闭被拦截 |
+| 托盘常驻 | 日志 `tray icon created`；用 Win32 消息模拟左键、关闭、菜单退出 | 关闭后窗口隐藏且进程存活；托盘点击恢复可见；退出触发 `shutting down MacastCore` |
 | 点击 Seek / 拖拽播放 / 设置面板 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
 
 > 顺带修掉一个隐藏 bug：`http_date_now()` 的星期索引算错（1970-01-01 会输出 `Fri`），已改为 `(days + 4) % 7` 并补了单元测试。

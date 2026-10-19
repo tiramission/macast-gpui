@@ -44,6 +44,14 @@ pub fn on_close_requested(window: &mut Window) -> bool {
 
 /// Create the icon and start polling its menu/click events on gpui's executor.
 pub fn start(window: AnyWindowHandle, cx: &mut App) -> anyhow::Result<()> {
+    // Resolve the HWND once, while we are still on the main thread outside a
+    // render pass. Showing the window later must not re-enter gpui's window
+    // state (that trips a `RefCell already borrowed` assertion).
+    let hwnd = window
+        .update(cx, |_, window, _| window_hwnd(window))
+        .ok()
+        .flatten();
+
     let menu = Menu::new();
     let show_item = MenuItem::new("显示主窗口", true, None);
     let quit_item = MenuItem::new("退出 Macast-Gpui", true, None);
@@ -68,7 +76,7 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) -> anyhow::Result<()> {
     cx.spawn(async move |cx: &mut AsyncApp| loop {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id == show_id {
-                show_window(window, cx);
+                show_window(hwnd);
             } else if event.id == quit_id {
                 QUITTING.store(true, Ordering::SeqCst);
                 let _ = cx.update(|cx| cx.quit());
@@ -85,7 +93,7 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) -> anyhow::Result<()> {
                 | TrayIconEvent::DoubleClick {
                     button: MouseButton::Left,
                     ..
-                } => show_window(window, cx),
+                } => show_window(hwnd),
                 _ => {}
             }
         }
@@ -102,16 +110,17 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn show_window(window: AnyWindowHandle, cx: &mut AsyncApp) {
-    let _ = window.update(cx, |_, window, _| {
-        if let Some(hwnd) = window_hwnd(window) {
-            unsafe {
-                let _ = ShowWindow(HWND(hwnd as *mut core::ffi::c_void), SW_SHOW);
-                let _ = SetForegroundWindow(HWND(hwnd as *mut core::ffi::c_void));
-            }
-        }
-        window.activate_window();
-    });
+/// Show + focus through Win32 directly. Doing this via gpui's window state
+/// (or from inside `window.update`) re-enters borrowed RefCells, so the HWND is
+/// resolved once at startup and used raw from the polling task.
+fn show_window(hwnd: Option<isize>) {
+    let Some(hwnd) = hwnd else {
+        return;
+    };
+    unsafe {
+        let _ = ShowWindow(HWND(hwnd as *mut core::ffi::c_void), SW_SHOW);
+        let _ = SetForegroundWindow(HWND(hwnd as *mut core::ffi::c_void));
+    }
 }
 
 fn window_hwnd(window: &Window) -> Option<isize> {
