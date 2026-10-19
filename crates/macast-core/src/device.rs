@@ -13,7 +13,8 @@ pub fn sink_protocol_info() -> String {
     SINK_PROTOCOL_INFO.trim().to_string()
 }
 
-pub const SERVER_STRING: &str = concat!("Linux/5.0 UPnP/1.1 Macast-Gpui/", env!("CARGO_PKG_VERSION"));
+pub const SERVER_STRING: &str =
+    concat!("Linux/5.0 UPnP/1.1 Macast-Gpui/", env!("CARGO_PKG_VERSION"));
 
 /// The three UPnP services we expose, with their control/event URLs
 /// (relative, exactly like Macast's description).

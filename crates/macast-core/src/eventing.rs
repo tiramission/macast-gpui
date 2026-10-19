@@ -168,7 +168,11 @@ impl EventRegistry {
         match res {
             Ok(r) if r.status().is_success() => true,
             Ok(r) => {
-                tracing::warn!("GENA NOTIFY to {} failed: HTTP {}", sub.callback, r.status());
+                tracing::warn!(
+                    "GENA NOTIFY to {} failed: HTTP {}",
+                    sub.callback,
+                    r.status()
+                );
                 false
             }
             Err(e) => {
@@ -202,9 +206,8 @@ impl EventRegistry {
         for (k, v) in changes {
             vars.push_str(&format!("<{k} val=\"{}\"/>", xml_escape(v)));
         }
-        let event = format!(
-            "<Event xmlns=\"{avt_ns}\"><InstanceID val=\"0\">{vars}</InstanceID></Event>"
-        );
+        let event =
+            format!("<Event xmlns=\"{avt_ns}\"><InstanceID val=\"0\">{vars}</InstanceID></Event>");
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <e:propertyset xmlns:e="{ns}"><e:property><LastChange>{}</LastChange></e:property></e:propertyset>"#,

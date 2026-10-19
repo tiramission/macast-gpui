@@ -37,10 +37,11 @@ fn main() {
         cx.activate(true);
 
         let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(
-                size(px(780.0), px(560.0)),
-                cx,
-            )),
+            window_bounds: Some(WindowBounds::centered(size(px(780.0), px(560.0)), cx)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Macast-Gpui".into()),
+                ..Default::default()
+            }),
             ..Default::default()
         };
 

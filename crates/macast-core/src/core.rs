@@ -73,10 +73,7 @@ impl Engine {
             ],
             _ => return Vec::new(),
         };
-        names
-            .iter()
-            .map(|n| (n.to_string(), st.get(n)))
-            .collect()
+        names.iter().map(|n| (n.to_string(), st.get(n))).collect()
     }
 
     pub fn description_xml(&self) -> String {
@@ -214,6 +211,33 @@ impl MacastCore {
         let _ = crate::services::avtransport::handle(&self.engine, call).await;
     }
 
+    /// Play a URI locally (drag & drop, "open with", tests).
+    ///
+    /// This is the same path a phone uses: it builds DIDL-Lite metadata so the
+    /// UI title, GENA `CurrentTrackMetaData` and mpv's media title all agree.
+    pub async fn play_uri(&self, uri: impl Into<String>, title: Option<String>) {
+        let uri = uri.into();
+        let title = title.unwrap_or_else(|| {
+            uri.rsplit('/')
+                .next()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(uri.as_str())
+                .to_string()
+        });
+        let metadata = build_didl_metadata(&uri, &title);
+        let mut args = std::collections::HashMap::new();
+        args.insert("InstanceID".to_string(), "0".to_string());
+        args.insert("CurrentURI".to_string(), uri);
+        args.insert("CurrentURIMetaData".to_string(), metadata);
+        let call = crate::soap::SoapCall {
+            service: "AVTransport".into(),
+            action: "SetAVTransportURI".into(),
+            args,
+        };
+        let _ = crate::services::avtransport::handle(&self.engine, call).await;
+        self.play().await;
+    }
+
     pub async fn set_volume(&self, volume: u8) {
         let mut args = std::collections::HashMap::new();
         args.insert("DesiredVolume".to_string(), volume.to_string());
@@ -290,8 +314,10 @@ async fn bridge_loop(engine: Arc<Engine>) {
                             );
                         }
                         PlayerEvent::Paused(true) => {
-                            changes_avt =
-                                st.set_vars("AVTransport", &[("TransportState", "PAUSED_PLAYBACK".into())]);
+                            changes_avt = st.set_vars(
+                                "AVTransport",
+                                &[("TransportState", "PAUSED_PLAYBACK".into())],
+                            );
                         }
                         PlayerEvent::Paused(false) | PlayerEvent::Playing => {
                             changes_avt =
@@ -309,17 +335,16 @@ async fn bridge_loop(engine: Arc<Engine>) {
                         }
                         PlayerEvent::Volume(v) => {
                             let v = v.round().clamp(0.0, 100.0) as u8;
-                            changes_rc = st.set_vars("RenderingControl", &[("Volume", v.to_string())]);
+                            changes_rc =
+                                st.set_vars("RenderingControl", &[("Volume", v.to_string())]);
                         }
                         PlayerEvent::Mute(m) => {
                             let value = if m { "1" } else { "0" };
                             changes_rc = st.set_vars("RenderingControl", &[("Mute", value.into())]);
                         }
                         PlayerEvent::Speed(s) => {
-                            changes_avt = st.set_vars(
-                                "AVTransport",
-                                &[("TransportPlaySpeed", format!("{s}"))],
-                            );
+                            changes_avt = st
+                                .set_vars("AVTransport", &[("TransportPlaySpeed", format!("{s}"))]);
                         }
                         PlayerEvent::Error(msg) => {
                             tracing::warn!("player error: {msg}");
@@ -406,4 +431,28 @@ pub fn position_str(secs: f64) -> String {
 /// Used by `macast-app` to decide the default player kind on first run.
 pub fn default_player_kind() -> PlayerKind {
     PlayerKind::default()
+}
+
+/// Build a minimal DIDL-Lite document for a URI we are about to play.
+pub fn build_didl_metadata(uri: &str, title: &str) -> String {
+    format!(
+        r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="0" parentID="-1" restricted="1"><dc:title>{}</dc:title><upnp:class>object.item</upnp:class><res protocolInfo="http-get:*:*:*">{}</res></item></DIDL-Lite>"#,
+        crate::util::xml_escape(title),
+        crate::util::xml_escape(uri),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn didl_metadata_round_trips_title() {
+        let meta = build_didl_metadata("file:///C:/a%20b.mp4", "a & b");
+        assert_eq!(
+            crate::soap::parse_didl_title(&meta).as_deref(),
+            Some("a & b")
+        );
+        assert!(meta.contains("file:///C:/a%20b.mp4"));
+    }
 }

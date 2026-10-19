@@ -28,7 +28,7 @@ impl TransportState {
             TransportState::PausedPlayback => "PAUSED_PLAYBACK",
         }
     }
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_state(s: &str) -> Self {
         match s {
             "PLAYING" => TransportState::Playing,
             "PAUSED_PLAYBACK" => TransportState::PausedPlayback,
@@ -159,14 +159,22 @@ impl RendererState {
     }
 
     pub fn get_bool(&self, name: &str) -> bool {
-        matches!(self.vars.get(name).map(String::as_str), Some("1") | Some("true") | Some("yes"))
+        matches!(
+            self.vars.get(name).map(String::as_str),
+            Some("1") | Some("true") | Some("yes")
+        )
     }
 
     // ---- state variable updates ----------------------------------------
 
     /// Set a state variable. Returns `Some((name, value))` when the change
     /// should be pushed to GENA subscribers of `service`.
-    pub fn set_var(&mut self, service: &str, name: &str, value: impl Into<String>) -> Option<(String, String)> {
+    pub fn set_var(
+        &mut self,
+        service: &str,
+        name: &str,
+        value: impl Into<String>,
+    ) -> Option<(String, String)> {
         let value = value.into();
         let changed = self.vars.get(name).map(String::as_str) != Some(value.as_str());
         self.vars.insert(name.to_string(), value.clone());
@@ -179,11 +187,7 @@ impl RendererState {
     }
 
     /// Convenience: update several vars at once, returning the evented deltas.
-    pub fn set_vars(
-        &mut self,
-        service: &str,
-        updates: &[(&str, String)],
-    ) -> Vec<(String, String)> {
+    pub fn set_vars(&mut self, service: &str, updates: &[(&str, String)]) -> Vec<(String, String)> {
         let mut out = Vec::new();
         for (name, value) in updates {
             if let Some(delta) = self.set_var(service, name, value.clone()) {
@@ -197,5 +201,8 @@ impl RendererState {
 /// Map an mpv-reported position (seconds) into the two UPnP position vars.
 pub fn position_vars(pos: f64) -> [(&'static str, String); 2] {
     let t = format_time(pos);
-    [("RelativeTimePosition", t.clone()), ("AbsoluteTimePosition", t)]
+    [
+        ("RelativeTimePosition", t.clone()),
+        ("AbsoluteTimePosition", t),
+    ]
 }

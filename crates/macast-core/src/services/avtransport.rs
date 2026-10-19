@@ -17,7 +17,11 @@ pub async fn handle(
         "SetAVTransportURI" => set_av_transport_uri(engine, &call).await,
         "SetNextAVTransportURI" => {
             let uri = call.args.get("NextURI").cloned().unwrap_or_default();
-            let meta = call.args.get("NextURIMetaData").cloned().unwrap_or_default();
+            let meta = call
+                .args
+                .get("NextURIMetaData")
+                .cloned()
+                .unwrap_or_default();
             let mut st = engine.state.write().await;
             let changes = st.set_vars(
                 "AVTransport",
@@ -36,10 +40,7 @@ pub async fn handle(
             Ok(vec![
                 ("CurrentTransportState".into(), st.get("TransportState")),
                 ("CurrentTransportStatus".into(), st.get("TransportStatus")),
-                (
-                    "CurrentSpeed".into(),
-                    st.get("TransportPlaySpeed"),
-                ),
+                ("CurrentSpeed".into(), st.get("TransportPlaySpeed")),
             ])
         }
         "GetPositionInfo" => get_position_info(engine).await,
@@ -62,8 +63,13 @@ pub async fn handle(
         "Play" => {
             engine.player.resume().await;
             let mut st = engine.state.write().await;
-            let changes =
-                st.set_vars("AVTransport", &[("TransportState", "PLAYING".into()), ("TransportStatus", "OK".into())]);
+            let changes = st.set_vars(
+                "AVTransport",
+                &[
+                    ("TransportState", "PLAYING".into()),
+                    ("TransportStatus", "OK".into()),
+                ],
+            );
             drop(st);
             engine.apply_changes("AVTransport", changes).await;
             engine
@@ -76,7 +82,10 @@ pub async fn handle(
             let mut st = engine.state.write().await;
             let changes = st.set_vars(
                 "AVTransport",
-                &[("TransportState", "PAUSED_PLAYBACK".into()), ("TransportStatus", "OK".into())],
+                &[
+                    ("TransportState", "PAUSED_PLAYBACK".into()),
+                    ("TransportStatus", "OK".into()),
+                ],
             );
             drop(st);
             engine.apply_changes("AVTransport", changes).await;
@@ -88,8 +97,7 @@ pub async fn handle(
         "Stop" => {
             engine.player.stop().await;
             let mut st = engine.state.write().await;
-            let changes =
-                st.set_vars("AVTransport", &[("TransportState", "STOPPED".into())]);
+            let changes = st.set_vars("AVTransport", &[("TransportState", "STOPPED".into())]);
             drop(st);
             engine.apply_changes("AVTransport", changes).await;
             engine
@@ -98,7 +106,11 @@ pub async fn handle(
             Ok(vec![])
         }
         "Seek" => {
-            let unit = call.args.get("Unit").cloned().unwrap_or_else(|| "REL_TIME".into());
+            let unit = call
+                .args
+                .get("Unit")
+                .cloned()
+                .unwrap_or_else(|| "REL_TIME".into());
             let target = call.args.get("Target").cloned().unwrap_or_default();
             let secs = parse_time(&target);
             // Only relative-time seeking is meaningful for network streams.
@@ -141,10 +153,7 @@ async fn set_av_transport_uri(
         .or_else(|| uri.rsplit('/').next().map(|s| s.to_string()))
         .unwrap_or_else(|| uri.clone());
 
-    engine
-        .player
-        .set_media_url(&uri, 0.0, &title)
-        .await;
+    engine.player.set_media_url(&uri, 0.0, &title).await;
 
     let mut updates: Vec<(&str, String)> = vec![
         ("CurrentTrackURI", uri.clone()),

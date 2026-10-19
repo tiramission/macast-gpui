@@ -17,7 +17,9 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone)]
 pub enum PlayerEvent {
     /// Media loaded and (auto-)playing; duration may be unknown (0.0).
-    Loaded { duration: f64 },
+    Loaded {
+        duration: f64,
+    },
     /// Current playback position in seconds.
     Position(f64),
     /// Total duration in seconds (0.0 = unknown).

@@ -58,11 +58,7 @@ pub fn parse_call(body: &str) -> Result<SoapCall, SoapFault> {
         .ok_or_else(|| SoapFault::new(400, "Missing action element"))?;
 
     let action = action_el.tag_name().name().to_string();
-    let ns = action_el
-        .tag_name()
-        .namespace()
-        .unwrap_or("")
-        .to_string();
+    let ns = action_el.tag_name().namespace().unwrap_or("").to_string();
     // urn:schemas-upnp-org:service:AVTransport:1 -> AVTransport
     let service = ns
         .split(':')
@@ -78,7 +74,11 @@ pub fn parse_call(body: &str) -> Result<SoapCall, SoapFault> {
         args.insert(name, value);
     }
 
-    Ok(SoapCall { service, action, args })
+    Ok(SoapCall {
+        service,
+        action,
+        args,
+    })
 }
 
 /// Extract the `<dc:title>` from DIDL-Lite metadata (used by SetAVTransportURI).
@@ -137,4 +137,75 @@ pub fn build_fault(fault: &SoapFault) -> String {
         code = fault.error_code,
         desc = xml_escape(&fault.error_description),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SET_URI: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <CurrentURI>http://192.168.1.2:8000/movie.mp4</CurrentURI>
+      <CurrentURIMetaData>&lt;DIDL-Lite&gt;x&lt;/DIDL-Lite&gt;</CurrentURIMetaData>
+    </u:SetAVTransportURI>
+  </s:Body>
+</s:Envelope>"#;
+
+    #[test]
+    fn parses_action_and_args() {
+        let call = parse_call(SET_URI).expect("valid call");
+        assert_eq!(call.service, "AVTransport");
+        assert_eq!(call.action, "SetAVTransportURI");
+        assert_eq!(
+            call.args.get("CurrentURI").map(String::as_str),
+            Some("http://192.168.1.2:8000/movie.mp4")
+        );
+        assert_eq!(call.args.get("InstanceID").map(String::as_str), Some("0"));
+        // XML entities must be decoded by the XML parser.
+        assert!(call.args["CurrentURIMetaData"].contains("<DIDL-Lite>"));
+    }
+
+    #[test]
+    fn rejects_malformed_requests() {
+        assert_eq!(parse_call("<not-xml").unwrap_err().error_code, 400);
+        assert_eq!(
+            parse_call(r#"<Envelope><Body></Body></Envelope>"#)
+                .unwrap_err()
+                .error_code,
+            400
+        );
+        let unknown_ns = r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:Play xmlns:u="urn:foo"/></s:Body></s:Envelope>"#;
+        assert_eq!(parse_call(unknown_ns).unwrap_err().error_code, 400);
+    }
+
+    #[test]
+    fn extracts_didl_title() {
+        let meta = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <item id="1"><dc:title>  测试影片  </dc:title></item>
+        </DIDL-Lite>"#;
+        assert_eq!(parse_didl_title(meta).as_deref(), Some("测试影片"));
+        assert_eq!(parse_didl_title(""), None);
+        assert_eq!(parse_didl_title("<DIDL-Lite/>"), None);
+        assert_eq!(parse_didl_title("not xml"), None);
+    }
+
+    #[test]
+    fn builds_response_and_fault() {
+        let body = build_response(
+            "AVTransport",
+            "GetTransportInfo",
+            &[("CurrentTransportState".into(), "PLAYING".into())],
+        );
+        assert!(body.contains(
+            r#"<u:GetTransportInfoResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">"#
+        ));
+        assert!(body.contains("<CurrentTransportState>PLAYING</CurrentTransportState>"));
+
+        let fault = build_fault(&SoapFault::new(701, "Transition not available"));
+        assert!(fault.contains("<errorCode>701</errorCode>"));
+        assert!(fault.contains("<errorDescription>Transition not available</errorDescription>"));
+    }
 }

@@ -17,7 +17,9 @@ macast-gpui/
 - **SOAP 控制**：`SetAVTransportURI`（含 DIDL-Lite 元数据标题解析）、`Play/Pause/Stop/Seek`、音量/静音、`GetProtocolInfo` 等全部查询动作
 - **GENA 事件订阅**：SUBSCRIBE/UNSUBSCRIBE/续期，初始全量推送 + `LastChange` 增量推送
 - **mpv 播放后端**：外部 mpv 进程 + JSON IPC（与 Macast 同方案），属性观察实时回传进度/时长/播放状态
-- **gpui 界面**：播放状态、标题、进度条、播放控制、音量、一键复制投屏链接、网络信息
+- **gpui 界面**：播放状态、标题、进度条（点击跳转 / ±10 秒）、播放控制、音量、一键复制投屏链接、网络信息
+- **设置面板**：查看设备名/端口/UDN、切换 mpv/null 后端、一键打开 `config.json`、Windows 开机自启开关
+- **拖拽播放**：把本地视频/音频拖进窗口即可直接播放（自动转 `file://` URI）
 - **可插拔播放器**：`Player` trait；无 mpv 环境可用 `null` 后端联调协议
 
 ## 快速开始
@@ -106,13 +108,17 @@ macast-app（gpui）── watch::Receiver<PlaybackSnapshot> ──► RootView 
 
 ## 已知边界 / Roadmap
 
+- [x] 点击进度条跳转（Seek）+ 快进/快退 10 秒
+- [x] 设置面板（查看配置、切换播放后端、打开 `config.json`；文本编辑仍走配置文件）
+- [x] 拖拽本地媒体文件到窗口直接播放
+- [x] Windows 开机自启（HKCU Run 键，设置面板里开关）
 - [ ] 托盘图标 + 最小化到托盘（gpui 无内置托盘 API，方案见 GUIDE §9）
-- [ ] 设置界面（当前改 `config.json`）
-- [ ] 点击进度条跳转（Seek）
+- [ ] 应用内文本输入（gpui 0.2.2 无 Input 元素 / IME 支持，需自行实现）
+- [ ] 安装包（见 GUIDE §7）
 - [ ] AirPlay / Chromecast 协议（协议完全不同，工作量大）
 - [ ] 视频嵌入 gpui 窗口（mpv render API → wgpu 纹理）
 
 ## 致谢与许可
 
 - 协议行为参照 [Macast](https://github.com/xfangfang/Macast)（MIT）实现；`macast-core/assets/` 下的 SCPD 与 SinkProtocolInfo 来自该项目（见 `assets/NOTICE.txt`）
-- 本项目代码以 MIT 许可发布
+- 本项目代码以 [MIT](LICENSE) 许可发布

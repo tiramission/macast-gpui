@@ -6,24 +6,19 @@
 //! - Linux:   `~/.config/macast-gpui/config.json`
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::info;
 use uuid::Uuid;
 
 /// Which player backend receives the media.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayerKind {
     /// External mpv process, driven through its JSON IPC socket.
+    #[default]
     Mpv,
     /// No-op player (useful for headless testing of the DLNA stack).
     Null,
-}
-
-impl Default for PlayerKind {
-    fn default() -> Self {
-        PlayerKind::Mpv
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,8 +84,12 @@ impl Config {
 
     /// Load config from disk, creating it (with a fresh UDN) on first run.
     pub fn load() -> Self {
-        let path = Self::config_path();
-        match std::fs::read_to_string(&path) {
+        Self::load_from(&Self::config_path())
+    }
+
+    /// Same as [`Config::load`] but against an explicit path (used by tests).
+    pub fn load_from(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
             Ok(text) => match serde_json::from_str::<Config>(&text) {
                 Ok(cfg) => return cfg,
                 Err(e) => tracing::warn!("config file is corrupt ({e}), using defaults"),
@@ -98,7 +97,7 @@ impl Config {
             Err(e) => tracing::debug!("no config file yet: {e}"),
         }
         let cfg = Config::default();
-        if let Err(e) = cfg.save() {
+        if let Err(e) = cfg.save_to(path) {
             tracing::warn!("could not persist initial config: {e}");
         } else {
             info!("created default config at {}", path.display());
@@ -107,10 +106,51 @@ impl Config {
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
-        let dir = Self::config_dir();
-        std::fs::create_dir_all(&dir)?;
+        self.save_to(&Self::config_path())
+    }
+
+    /// Write the config as pretty JSON, creating parent directories as needed.
+    pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let text = serde_json::to_string_pretty(self)?;
-        std::fs::write(Self::config_path(), text)?;
+        std::fs::write(path, text)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_through_json() {
+        let dir = std::env::temp_dir().join(format!("macast-gpui-test-{}", Uuid::new_v4()));
+        let path = dir.join("config.json");
+
+        let cfg = Config {
+            friendly_name: "客厅电视".into(),
+            port: 5069,
+            player: PlayerKind::Null,
+            ..Default::default()
+        };
+        cfg.save_to(&path).expect("save");
+
+        let loaded = Config::load_from(&path);
+        assert_eq!(loaded.udn, cfg.udn);
+        assert_eq!(loaded.friendly_name, "客厅电视");
+        assert_eq!(loaded.player, PlayerKind::Null);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_optional_fields_fall_back_to_defaults() {
+        let cfg: Config = serde_json::from_str(r#"{"udn":"u","friendly_name":"n","port":0}"#)
+            .expect("legacy config parses");
+        assert_eq!(cfg.player, PlayerKind::Mpv);
+        assert_eq!(cfg.ssdp_notify_secs, 30);
+        assert_eq!(cfg.max_age, 1800);
     }
 }

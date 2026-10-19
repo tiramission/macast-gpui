@@ -234,11 +234,7 @@ impl MpvPlayer {
 #[async_trait]
 impl Player for MpvPlayer {
     async fn set_media_url(&self, url: &str, start_secs: f64, title: &str) {
-        self.cmd(vec![
-            "loadfile".into(),
-            url.into(),
-            "replace".into(),
-        ]);
+        self.cmd(vec!["loadfile".into(), url.into(), "replace".into()]);
         if start_secs > 0.0 {
             self.cmd(vec!["seek".into(), start_secs.into(), "absolute".into()]);
         }
@@ -280,19 +276,11 @@ impl Player for MpvPlayer {
     }
 
     async fn set_mute(&self, mute: bool) {
-        self.cmd(vec![
-            "set_property".into(),
-            "mute".into(),
-            mute.into(),
-        ]);
+        self.cmd(vec!["set_property".into(), "mute".into(), mute.into()]);
     }
 
     async fn set_speed(&self, speed: f64) {
-        self.cmd(vec![
-            "set_property".into(),
-            "speed".into(),
-            speed.into(),
-        ]);
+        self.cmd(vec!["set_property".into(), "speed".into(), speed.into()]);
     }
 
     async fn add_subtitle(&self, url: &str, title: &str) {
@@ -313,11 +301,7 @@ impl Player for MpvPlayer {
     }
 
     async fn show_text(&self, text: &str, duration_ms: u64) {
-        self.cmd(vec![
-            "show-text".into(),
-            text.into(),
-            duration_ms.into(),
-        ]);
+        self.cmd(vec!["show-text".into(), text.into(), duration_ms.into()]);
     }
 
     async fn shutdown(&self) {

@@ -361,16 +361,15 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 
 ### P4 · UI 完善（gpui）
 
-读 `macast-app/src/views/mod.rs`。当前已有：状态徽章、标题、进度条、播放/暂停/停止/静音/复制链接、音量条、网络信息。可继续做：
-- 点击进度条跳转（Seek）——`ClickEvent` 里拿 x 坐标算比例
-- 标题/端口/播放器选择（设置面板，写回 `config.rs`）
-- 拖拽 URL 到窗口直接播放（本地文件路径转 `file://`）
+读 `macast-app/src/views/mod.rs`。当前已有：状态徽章、标题、进度条（点击 Seek、±10 秒）、播放/暂停/停止/静音/复制链接、音量条、网络信息、设置面板、拖拽本地文件播放。可继续做：
+- 应用内文本输入（gpui 0.2.2 没有 Input 元素，需自己处理 key_down + IME，工作量大）
 - 字幕开关（`DisplayCurrentSubtitle` 状态变量已留好）
+- 投屏历史 / 最近播放列表
 
 ### P5 · 产品化
 
 - **托盘图标**（见 §9）
-- **开机自启**（Windows 计划任务 / 注册表 Run 键，注意权限）
+- **开机自启**：已实现 Windows 版本（设置面板开关，写 `HKCU\...\CurrentVersion\Run`）；macOS 需 LaunchAgent
 - **打包**：见 §7
 - **多语言/主题**：gpui 用 `cx.theme()` 可以适配系统深浅色
 
@@ -431,6 +430,17 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | **真机控制端投屏** | 局域网控制端自发发现 | 对方完成 SSDP 发现 → GENA 订阅 → SetAVTransportURI 推图，全链路通 |
 
 > 实测中发现并修掉的两个 bug，值得记住：① axum 0.8 不允许路径段里"参数+字面量"混排（`/dlna/{service}.xml` 会直接 panic），SCPD 要注册显式路由；② GENA SEQ 如果只在 clone 出来的 Subscriber 上自增，每条 NOTIFY 都会是 SEQ 0，必须回写注册表。
+
+**2026-10-19 增量验证**（UI 功能 + 测试）：
+
+| 验证项 | 方法 | 结果 |
+|---|---|---|
+| 核心单元测试 | `cargo test -p macast-core` | 11 passed（时间解析、HTTP 日期、DIDL、SOAP、配置读写） |
+| 应用编译 | `cargo check -p macast-app -j 2` / `cargo build` | 通过 |
+| 启动冒烟 | 运行 `target/debug/macast-app.exe` | 窗口/HTTP/SSDP 正常；无 mpv 时自动回退 null 并打日志 |
+| 点击 Seek / 拖拽播放 / 设置面板 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
+
+> 顺带修掉一个隐藏 bug：`http_date_now()` 的星期索引算错（1970-01-01 会输出 `Fri`），已改为 `(days + 4) % 7` 并补了单元测试。
 
 ### 6.5 Wireshark 过滤器（排障）
 

@@ -79,7 +79,9 @@ impl Player for NullPlayer {
     }
 
     async fn set_volume(&self, volume: u8) {
-        let _ = self.events.send(PlayerEvent::Volume(volume.min(100) as f64));
+        let _ = self
+            .events
+            .send(PlayerEvent::Volume(volume.min(100) as f64));
     }
 
     async fn set_mute(&self, mute: bool) {

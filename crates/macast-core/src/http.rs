@@ -122,7 +122,9 @@ async fn event_sub(
             }
             let callback = match header_str("CALLBACK") {
                 Some(c) => c,
-                None => return (StatusCode::PRECONDITION_FAILED, "missing CALLBACK").into_response(),
+                None => {
+                    return (StatusCode::PRECONDITION_FAILED, "missing CALLBACK").into_response()
+                }
             };
             // CALLBACK: <http://192.168.1.5:1234/cb>
             let url = callback
@@ -153,7 +155,11 @@ async fn event_sub(
             Some(sid) if engine.events.remove(sid) => (StatusCode::OK, "").into_response(),
             _ => (StatusCode::PRECONDITION_FAILED, "no such SID").into_response(),
         },
-        _ => (StatusCode::METHOD_NOT_ALLOWED, "expected SUBSCRIBE/UNSUBSCRIBE").into_response(),
+        _ => (
+            StatusCode::METHOD_NOT_ALLOWED,
+            "expected SUBSCRIBE/UNSUBSCRIBE",
+        )
+            .into_response(),
     }
 }
 
@@ -181,11 +187,7 @@ async fn status_page(State(engine): State<Arc<Engine>>) -> Response {
          <body style=\"font-family:system-ui;padding:2rem\">\
          <h2>Macast-Gpui</h2><pre>{json}</pre></body></html>"
     );
-    (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        html,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
 
 fn xml_response(body: String) -> Response {
