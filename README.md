@@ -159,7 +159,7 @@ macast-app（gpui）── watch::Receiver<PlaybackSnapshot> ──► RootView 
 - [ ] 安装包（见 GUIDE §7）
 - [ ] AirPlay / Chromecast 协议（协议完全不同，工作量大）
 - [x] **视频嵌入 gpui 窗口**：已由 alhazen 后端实现——画面通过 `video_view()` 直接画在 Now Playing 卡片内，不弹外部窗口
-- [ ] mpv 后端也走窗口内渲染（需要 gpui 暴露外部 GPU 纹理接口，当前版本没有）
+- [ ] mpv 后端也走窗口内渲染：**可行**，方案已落盘 [`docs/plan-inwindow-mpv.md`](docs/plan-inwindow-mpv.md)（libmpv 进程内库 + SW render → gpui `paint_image`）
 
 ### 关于「mpv render API → wgpu 纹理」
 

@@ -354,6 +354,8 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 
 alhazen 后端（默认，`config.json` 的 `"player": "alhazen"`）是进程内解码 + gpui `video_view()` 内嵌渲染，视频画在 Now Playing 卡片里，不弹外部窗口。Windows 上走 Media Foundation DXVA2 硬件解码（默认适配器，Optimus 笔记本上即核显）。播放配置固定 `prefer_hardware=true` + `auto_fallback=false` + `frame_queue_len=16`：防止硬件解码稍慢就静默切到 ffmpeg-cli 软件解码，深队列吸收解码器突发帧。实测 1080p60 满帧 0 丢帧；4K60 受 alhazen-core 0.6.0 逐像素帧回传 + gpui sprite atlas 每帧整帧上传双重限制约 27fps（后续升级 alhazen 或本地 patch 可解）。
 
+mpv 后端窗口内渲染的实施方案见 `docs/plan-inwindow-mpv.md`（libmpv + SW render，不需要 mpv.exe，但需要 libmpv-2.dll）。
+
 诊断：设 `ALHAZEN_DEBUG=1` 环境变量启动，每秒打印 shown fps / paint 耗时 / 丢帧数 / 当前后端；应用日志里可见 `Media Foundation H264: Microsoft H264 Video Decoder MFT (GPU)`。
 
 验收标准：推流 → 播放 → 暂停 → 进度条跟随 → 停止，全链路通。
