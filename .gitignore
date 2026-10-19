@@ -5,6 +5,9 @@
 # Local runtime data (generated at first launch, contains the device UDN)
 config.json
 
+# WorkBuddy project data (memory/logs)
+.workbuddy/
+
 # Editor / OS noise
 .vscode/
 .idea/
