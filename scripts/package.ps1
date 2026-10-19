@@ -14,6 +14,19 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+# gpui compiles its HLSL with fxc.exe from the Windows SDK. It only probes PATH
+# and one hard-coded SDK version, so point it at whichever SDK is installed.
+if (-not $env:GPUI_FXC_PATH) {
+    $fxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter fxc.exe -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -like "*\x64\fxc.exe" } |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1
+    if ($fxc) {
+        $env:GPUI_FXC_PATH = $fxc.FullName
+        Write-Host "==> using fxc: $($fxc.FullName)"
+    }
+}
+
 Write-Host "==> cargo build --release -p macast-app -j 2"
 cargo build --release -p macast-app -j 2
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }

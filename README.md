@@ -89,6 +89,8 @@ cargo build --release -p macast-app   # 产物 target/release/macast-app.exe
 >
 > 先跑 `cargo check -p macast-app -j 2` 验证代码也无妨（只做元数据检查，最稳）。
 
+> **release 构建报 `Failed to find fxc.exe`**：gpui 用 Windows SDK 的 fxc 编译着色器，只认 PATH 和某个固定版本号。把 `GPUI_FXC_PATH` 指向 `C:\Program Files (x86)\Windows Kits\10\bin\<版本>\x64\fxc.exe` 即可；`scripts\package.ps1` 会自动探测。
+
 ### 打包（Windows）
 
 ```powershell

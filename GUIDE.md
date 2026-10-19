@@ -482,6 +482,7 @@ cargo build --release -p macast-app
 | 换 IP 后手机还连旧地址 | SSDP 缓存（max-age）未过期 | 重启 app 重发 byebye+alive；或调小 `ssdp_notify_secs` |
 | 端口 1900 被占用 | 系统里已有 SSDP 服务 | Windows 下 `SO_REUSEADDR` 可共存；不行就排查其它投屏软件 |
 | 编译 gpui 失败 | 缺 VS C++ 生成工具 / 旧版 Rust | 装 "Desktop development with C++"；用最新 stable |
+| release 报 `Failed to find fxc.exe` | gpui 只查 PATH 和固定版本 SDK | 设 `GPUI_FXC_PATH=...\Windows Kits\10\bin\<ver>\x64\fxc.exe` |
 | mpv 起不来 | 不在 PATH / 路径带空格 | `mpv_path` 写绝对路径；看启动日志的错误信息 |
 
 ### 8.1 gpui 0.2.2 API 备忘（与 Zed 主仓源码有差异，本骨架已验证）
