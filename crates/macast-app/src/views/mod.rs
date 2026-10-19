@@ -9,6 +9,7 @@
 //! composes controls from `div`s. Text inputs are still file-based (no IME in
 //! this gpui release): the settings panel shows values and offers shortcuts.
 
+use alhazen_gpui::{Source, VideoPlayer};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use macast_core::{Config, MacastCore, PlaybackSnapshot, PlayerKind, Theme, TransportState};
@@ -169,6 +170,10 @@ pub struct RootView {
     seek_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// Same trick for the volume slider.
     volume_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Alhazen video player entity (only when alhazen backend is active).
+    alhazen_player: Option<gpui::Entity<VideoPlayer>>,
+    /// Last cast URI for the alhazen player lifecycle.
+    alhazen_last_uri: Option<String>,
     /// Timestamp of the last titlebar click, for double-click to maximize.
     last_title_click: Option<std::time::Instant>,
     /// Keeps the OS appearance observer alive (auto theme).
@@ -212,6 +217,8 @@ impl RootView {
             autostart,
             seek_bounds: Rc::new(Cell::new(Bounds::default())),
             volume_bounds: Rc::new(Cell::new(Bounds::default())),
+            alhazen_player: None,
+            alhazen_last_uri: None,
             last_title_click: None,
             _appearance_sub: None,
         }
@@ -434,10 +441,29 @@ impl Render for RootView {
             None
         };
         let backend_fallback = fallback_label.is_some();
-
         let s = self.snapshot.clone();
         let playing = s.transport_state == TransportState::Playing;
         let has_media = !s.uri.is_empty();
+        let is_alhazen = runtime_backend == "alhazen" || self.config.player == PlayerKind::Alhazen;
+
+        // Alhazen backend: create a VideoPlayer entity for the current cast.
+        if is_alhazen {
+            if !has_media {
+                self.alhazen_player = None;
+                self.alhazen_last_uri = None;
+            } else if self.alhazen_last_uri.as_deref() != Some(s.uri.as_str()) {
+                self.alhazen_last_uri = Some(s.uri.clone());
+                let source = Source::parse(&s.uri)
+                    .unwrap_or_else(|_| Source::parse("file:///dev/null").unwrap());
+                let config = alhazen_gpui::PlayerConfig::default();
+                self.alhazen_player = Some(cx.new(|cx| VideoPlayer::new(source, config, cx)));
+                if let Some(player) = &self.alhazen_player {
+                    player.update(cx, |p, inner_cx| p.play(inner_cx));
+                }
+            }
+        } else {
+            self.alhazen_player = None;
+        }
 
         let mut root = div()
             .id("app-root")
@@ -469,6 +495,7 @@ impl Render for RootView {
                             &s,
                             playing,
                             has_media,
+                            self.alhazen_player.clone(),
                             self.seek_bounds.clone(),
                             cx,
                         ))
@@ -707,6 +734,7 @@ fn hero_card(
     s: &PlaybackSnapshot,
     playing: bool,
     has_media: bool,
+    alhazen_player: Option<gpui::Entity<VideoPlayer>>,
     seek_bounds: Rc<Cell<Bounds<Pixels>>>,
     cx: &mut Context<RootView>,
 ) -> Div {
@@ -838,7 +866,10 @@ fn hero_card(
         ))
         .border_1()
         .border_color(rgba(p().border))
-        .child(artwork(s, playing))
+        .when_some(alhazen_player.clone(), |this, player| {
+            this.child(alhazen_gpui::video_view(player).w_full().h_full())
+        })
+        .when_none(&alhazen_player, |this| this.child(artwork(s, playing)))
         .child(info)
 }
 
