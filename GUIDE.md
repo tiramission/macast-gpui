@@ -368,7 +368,9 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 - **组件**：`icon_button` / `text_button` / `switch` / 分段控件 / toast，全部用 `div` + `canvas` 组合；图标是矢量路径（播放、暂停、停止、音量、静音、滑杆、关闭、最小化、最大化、10s 箭头、复制、投屏、均衡器）。
 - **设置**：右侧滑出面板（348px）+ 半透明遮罩，点击面板内部不关闭（`cx.stop_propagation()`），点遮罩/关闭按钮关闭。
 - **Windows 细节**：gpui 0.2.2 的 `start_window_move` 在 Windows 上是空实现，自绘标题栏拖动用 `WM_NCLBUTTONDOWN + HTCAPTION`；最大化/最小化/隐藏用 `ShowWindowAsync`，避免在事件处理里同步 `ShowWindow` 触发 `RefCell already borrowed`（会让 surface 不 resize）。
-- 截图：`docs/screenshot-idle.png` / `docs/screenshot-playing.png`（Windows 150% 缩放实拍）。
+- 主题：`Config.theme`（`auto` / `light` / `dark`，默认 auto），渲染时用 `window.appearance()` 解析；`observe_window_appearance` 负责系统主题变化时重绘。设置里的分段控件即时生效，不需要重启。
+- 后端展示：设置面板区分「当前运行」（`core.engine.player.name()`）与「启动后端」（`config.player`）；当启动配置是 mpv 但实际回退 null 时，给出琥珀色「mpv 回退」chip 和排查提示；footer 同步标记。
+- 截图：`docs/screenshot-idle.png` / `docs/screenshot-playing.png` / `docs/screenshot-light.png`（Windows 150% 缩放实拍）。
 
 可继续做：
 - 应用内文本输入（gpui 0.2.2 没有 Input 元素，需自己处理 key_down + IME，工作量大）
@@ -380,7 +382,7 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 - **托盘图标**（见 §9）
 - **开机自启**：已实现 Windows 版本（设置面板开关，写 `HKCU\...\CurrentVersion\Run`）；macOS 需 LaunchAgent
 - **打包**：见 §7
-- **多语言/主题**：gpui 用 `cx.theme()` 可以适配系统深浅色
+- **多语言/主题**：主题已实现（auto / light / dark）；多语言未做
 
 ---
 
@@ -449,7 +451,8 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | 启动冒烟 | 运行 `target/debug/macast-app.exe` | 窗口/HTTP/SSDP 正常；无 mpv 时自动回退 null 并打日志 |
 | 托盘常驻 | 日志 `tray icon created`；用 Win32 消息模拟左键、关闭、菜单退出 | 关闭后窗口隐藏且进程存活；托盘点击恢复可见；退出触发 `shutting down MacastCore` |
 | 应用图标 | `LoadImageW(exe, 1, IMAGE_ICON)` + `GetClassLongPtr(GCLP_HICON)` | 资源 ID 1 存在（16–256 px），窗口类图标句柄非 0 |
-| mpv 空闲窗口 | 检查启动参数与日志 | `--force-window=no`，投屏时置 yes、Stop 复位（本机未装 mpv，未实机） |
+| mpv 空闲窗口 | 实机：启动后枚举 mpv 窗口；Play 本地 30s 测试视频；Stop | 空闲时 2 个隐藏窗口、0 个可见；Play 后 1 个窗口 **0,0,1707,960 全屏**；Stop 后 0 可见 |
+| mpv 进程清理 | 托盘退出后检查进程 | 应用退出后 mpv.exe 一并结束（taskkill /T 结束 shim 进程树） |
 | 投屏全屏 | 单测检查每次投屏的 mpv 命令序列 | `fullscreen=true` 在 `loadfile` 之前发送；`mpv_fullscreen=false` 可关闭 |
 | GPU 加速 | 启动日志 | `Using GPU: Intel Iris Xe` + `Created device with Direct3D 11.1`（硬件 D3D11；`0x887A002D` 只是 debug layer 缺失） |
 | 启动耗时 | 进程启动到主窗口可见（3 次） | **0.24–0.25s**（优化前 6.2s，见 §8 排查表） |
@@ -457,6 +460,8 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | 自绘标题栏交互 | 模拟鼠标：拖动、双击最大化/还原、点关闭 | 窗口可拖动；最大化后 surface 正确 resize；关闭隐藏到托盘 |
 | 设置滑出层 | 点设置图标 → 点面板内部 → 点遮罩 | 打开正常；点面板内部不关闭（stop_propagation）；点遮罩关闭 |
 | 提示条 | 点「复制链接」 | 底部 toast 出现并 4s 自动消失 |
+| 主题 | 设置里依次点 自动/亮色/暗色，检查 `config.json` 与截图 | 即时换色、无需重启；auto 跟随系统（本机亮色）；持久化为 snake_case |
+| 后端显示 | 检查 mpv 缺失时的设置/footer | 「当前运行 null + mpv 回退」+ 琥珀提示；装好 mpv 后显示 mpv |
 | 点击 Seek / 拖拽播放 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
 
 > 顺带修掉一个隐藏 bug：`http_date_now()` 的星期索引算错（1970-01-01 会输出 `Fri`），已改为 `(days + 4) % 7` 并补了单元测试。

@@ -342,6 +342,24 @@ impl Player for MpvPlayer {
 
     async fn shutdown(&self) {
         let _ = self.shutdown_tx.send(());
+        let pid = {
+            let child = self.child.lock().await;
+            child.as_ref().and_then(|child| child.id())
+        };
+        #[cfg(windows)]
+        if let Some(pid) = pid {
+            // mpv is commonly launched through a shim (mpv.com) that starts the
+            // real mpv.exe; killing only the shim leaves an orphan behind, so
+            // take down the whole process tree.
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        #[cfg(not(windows))]
+        let _ = pid;
         if let Some(child) = self.child.lock().await.as_mut() {
             let _ = child.kill().await;
         }

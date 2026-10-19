@@ -21,7 +21,9 @@ macast-gpui/
 - **SOAP 控制**：`SetAVTransportURI`（含 DIDL-Lite 元数据标题解析）、`Play/Pause/Stop/Seek`、音量/静音、`GetProtocolInfo` 等全部查询动作
 - **GENA 事件订阅**：SUBSCRIBE/UNSUBSCRIBE/续期，初始全量推送 + `LastChange` 增量推送
 - **mpv 播放后端**：外部 mpv 进程 + JSON IPC（与 Macast 同方案），属性观察实时回传进度/时长/播放状态
-- **gpui 界面（深色"影音控制台"）**：自绘标题栏、Now Playing 大卡片、悬浮控制栏、侧滑设置面板、矢量图标（canvas 绘制，无图片资源）
+- **gpui 界面（影音控制台）**：自绘标题栏、Now Playing 大卡片、悬浮控制栏、侧滑设置面板、矢量图标（canvas 绘制，无图片资源）
+- **主题**：亮色 / 暗色 / **自动（默认，跟随系统）**，设置面板切换即时生效
+- **后端状态透明**：设置里区分「当前运行」与「启动后端」；mpv 缺失时明确显示回退到 null 及原因
 - **设置面板**：查看设备名/端口/UDN、切换 mpv/null 后端、一键打开 `config.json`、Windows 开机自启开关
 - **拖拽播放**：把本地视频/音频拖进窗口即可直接播放（自动转 `file://` URI）
 - **系统托盘（Windows）**：关闭窗口 = 隐藏到托盘；托盘左键/菜单恢复窗口，菜单可退出
@@ -59,6 +61,7 @@ cargo run -p macast-app
   "player": "mpv",
   "mpv_path": null,
   "mpv_fullscreen": true,
+  "theme": "auto",
   "ssdp_notify_secs": 30,
   "max_age": 1800
 }

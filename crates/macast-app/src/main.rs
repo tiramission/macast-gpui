@@ -105,8 +105,10 @@ fn main() {
         };
 
         let window = cx
-            .open_window(window_options, |_, cx| {
-                cx.new(|cx| RootView::new(core.clone(), cx))
+            .open_window(window_options, |window, cx| {
+                let view = cx.new(|cx| RootView::new(core.clone(), cx));
+                view.update(cx, |view, cx| view.watch_appearance(window, cx));
+                view
             })
             .expect("failed to open the main window");
 

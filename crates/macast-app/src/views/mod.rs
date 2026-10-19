@@ -11,7 +11,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use macast_core::{Config, MacastCore, PlaybackSnapshot, PlayerKind, TransportState};
+use macast_core::{Config, MacastCore, PlaybackSnapshot, PlayerKind, Theme, TransportState};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -19,23 +19,138 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // ---- design tokens -------------------------------------------------------
-// One dark surface ramp, one accent. Semantic green is reserved for "playing";
-// volume and progress both use the accent so colour always means one thing.
+// Two palettes share the same semantic roles: one accent, status colours only
+// for playback state, three text levels. `Auto` resolves against the OS
+// appearance every frame, so switching themes does not need a restart.
 
-const BG: u32 = 0x0A0D13;
-const SURFACE: u32 = 0x121722;
-const SURFACE_HI: u32 = 0x171E2C;
-const TEXT: u32 = 0xEDF0F7;
-const MUTED: u32 = 0x98A2B3;
-const DIM: u32 = 0x7C8698;
-const ACCENT: u32 = 0x6C8CFF;
-const SUCCESS: u32 = 0x3DDC97;
-const WARN: u32 = 0xF5B84D;
-const ON_ACCENT: u32 = 0x0A0D13;
+#[derive(Clone, Copy)]
+struct Palette {
+    bg: u32,
+    surface: u32,
+    surface_hi: u32,
+    text: u32,
+    muted: u32,
+    dim: u32,
+    accent: u32,
+    accent_hover: u32,
+    accent_pressed: u32,
+    on_accent: u32,
+    success: u32,
+    warn: u32,
+    border: u32,
+    border_strong: u32,
+    hover: u32,
+    active: u32,
+    divider: u32,
+    accent_soft: u32,
+    accent_border: u32,
+    close_hover: u32,
+    backdrop: u32,
+    hero_from: u32,
+    hero_to: u32,
+    panel_from: u32,
+    panel_to: u32,
+    art_from: u32,
+    art_to: u32,
+    brand_from: u32,
+    brand_to: u32,
+    on_art: u32,
+    toast_bg: u32,
+    inset: u32,
+    segment_active: u32,
+    switch_off: u32,
+    knob: u32,
+}
 
-const BORDER: u32 = 0xFFFFFF14; // white @ 8%
-const BORDER_STRONG: u32 = 0xFFFFFF24; // white @ 14%
-const HOVER: u32 = 0xFFFFFF0F; // white @ 6%
+impl Palette {
+    const DARK: Palette = Palette {
+        bg: 0x0A0D13,
+        surface: 0x121722,
+        surface_hi: 0x171E2C,
+        text: 0xEDF0F7,
+        muted: 0x98A2B3,
+        dim: 0x7C8698,
+        accent: 0x6C8CFF,
+        accent_hover: 0x7D9AFF,
+        accent_pressed: 0x5B7BEE,
+        on_accent: 0x0A0D13,
+        success: 0x3DDC97,
+        warn: 0xF5B84D,
+        border: 0xFFFFFF14,
+        border_strong: 0xFFFFFF24,
+        hover: 0xFFFFFF0F,
+        active: 0xFFFFFF1F,
+        divider: 0xFFFFFF12,
+        accent_soft: 0x6C8CFF29,
+        accent_border: 0x6C8CFF40,
+        close_hover: 0xF0444429,
+        backdrop: 0x05070C99,
+        hero_from: 0x171E2C,
+        hero_to: 0x0F141E,
+        panel_from: 0x121824,
+        panel_to: 0x0D121A,
+        art_from: 0x33478F,
+        art_to: 0x141A27,
+        brand_from: 0x7D9AFF,
+        brand_to: 0x3E5BD6,
+        on_art: 0xFFFFFF,
+        toast_bg: 0x1B2333,
+        inset: 0x0B0F17,
+        segment_active: 0x2A3550,
+        switch_off: 0x2B3446,
+        knob: 0xFFFFFF,
+    };
+
+    const LIGHT: Palette = Palette {
+        bg: 0xF3F5F9,
+        surface: 0xFFFFFF,
+        surface_hi: 0xFFFFFF,
+        text: 0x111827,
+        muted: 0x5B6472,
+        dim: 0x5F6878,
+        accent: 0x3D5AF1,
+        accent_hover: 0x2F49D9,
+        accent_pressed: 0x2A41C4,
+        on_accent: 0xFFFFFF,
+        success: 0x047857,
+        warn: 0xB45309,
+        border: 0x00000014,
+        border_strong: 0x00000024,
+        hover: 0x0000000A,
+        active: 0x00000014,
+        divider: 0x0000000F,
+        accent_soft: 0x3D5AF11F,
+        accent_border: 0x3D5AF140,
+        close_hover: 0xDC26261F,
+        backdrop: 0x0F172A59,
+        hero_from: 0xFFFFFF,
+        hero_to: 0xF6F8FF,
+        panel_from: 0xFFFFFF,
+        panel_to: 0xF7F9FD,
+        art_from: 0x6C8CFF,
+        art_to: 0x3D5AF1,
+        brand_from: 0x6C8CFF,
+        brand_to: 0x3D5AF1,
+        on_art: 0xFFFFFF,
+        toast_bg: 0xFFFFFF,
+        inset: 0xF1F4FA,
+        segment_active: 0xE4E9FF,
+        switch_off: 0xD7DDE9,
+        knob: 0xFFFFFF,
+    };
+}
+
+thread_local! {
+    static PALETTE: Cell<Palette> = const { Cell::new(Palette::DARK) };
+}
+
+fn set_palette(palette: Palette) {
+    PALETTE.with(|cell| cell.set(palette));
+}
+
+fn p() -> Palette {
+    PALETTE.with(|cell| cell.get())
+}
 
 pub struct RootView {
     core: Arc<MacastCore>,
@@ -56,6 +171,8 @@ pub struct RootView {
     volume_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// Timestamp of the last titlebar click, for double-click to maximize.
     last_title_click: Option<std::time::Instant>,
+    /// Keeps the OS appearance observer alive (auto theme).
+    _appearance_sub: Option<Subscription>,
 }
 
 impl RootView {
@@ -96,7 +213,13 @@ impl RootView {
             seek_bounds: Rc::new(Cell::new(Bounds::default())),
             volume_bounds: Rc::new(Cell::new(Bounds::default())),
             last_title_click: None,
+            _appearance_sub: None,
         }
+    }
+
+    /// Repaint when the OS switches between light and dark (auto theme).
+    pub fn watch_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._appearance_sub = Some(cx.observe_window_appearance(window, |_, _, cx| cx.notify()));
     }
 
     // ---- local control helpers ------------------------------------------
@@ -218,6 +341,26 @@ impl RootView {
         self.save_config("投屏全屏", cx);
     }
 
+    fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        if self.config.theme == theme {
+            return;
+        }
+        self.config.theme = theme;
+        match self.config.save() {
+            Ok(()) => {
+                let label = match theme {
+                    Theme::Auto => "跟随系统",
+                    Theme::Light => "亮色",
+                    Theme::Dark => "暗色",
+                };
+                // Theme is applied per frame, so no restart is needed.
+                self.set_notice(format!("主题：{label}"), cx);
+            }
+            Err(e) => self.set_notice(format!("保存配置失败：{e}"), cx),
+        }
+        cx.notify();
+    }
+
     fn open_config(&mut self, cx: &mut Context<Self>) {
         // Make sure the file exists before handing it to the OS.
         if let Err(e) = self.config.save() {
@@ -268,7 +411,21 @@ impl RootView {
 }
 
 impl Render for RootView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = match self.config.theme {
+            Theme::Light => Palette::LIGHT,
+            Theme::Dark => Palette::DARK,
+            Theme::Auto => match window.appearance() {
+                WindowAppearance::Light | WindowAppearance::VibrantLight => Palette::LIGHT,
+                _ => Palette::DARK,
+            },
+        };
+        set_palette(palette);
+
+        let runtime_backend = self.core.engine.player.name();
+        let backend_fallback =
+            self.core.engine.config.player == PlayerKind::Mpv && runtime_backend == "null";
+
         let s = self.snapshot.clone();
         let playing = s.transport_state == TransportState::Playing;
         let has_media = !s.uri.is_empty();
@@ -277,8 +434,8 @@ impl Render for RootView {
             .id("app-root")
             .relative()
             .size_full()
-            .bg(rgb(BG))
-            .text_color(rgb(TEXT))
+            .bg(rgb(p().bg))
+            .text_color(rgb(p().text))
             .flex()
             .flex_col()
             // Dropping a local media file plays it directly. gpui maps OS file
@@ -313,7 +470,7 @@ impl Render for RootView {
                             self.volume_bounds.clone(),
                             cx,
                         ))
-                        .child(footer(&s, &self.core)),
+                        .child(footer(&s, runtime_backend, backend_fallback)),
                 ),
             );
 
@@ -323,6 +480,8 @@ impl Render for RootView {
                 s.port,
                 &s.ips,
                 self.autostart,
+                runtime_backend,
+                backend_fallback,
                 cx,
             ));
         }
@@ -381,7 +540,7 @@ fn title_bar(s: &PlaybackSnapshot, show_settings: bool, cx: &mut Context<RootVie
                 .child(
                     div()
                         .text_size(px(10.5))
-                        .text_color(rgb(DIM))
+                        .text_color(rgb(p().dim))
                         .truncate()
                         .child(device),
                 ),
@@ -395,9 +554,9 @@ fn title_bar(s: &PlaybackSnapshot, show_settings: bool, cx: &mut Context<RootVie
         .items_center()
         .pl_4()
         .pr_2()
-        .bg(rgb(BG))
+        .bg(rgb(p().bg))
         .border_b_1()
-        .border_color(rgba(BORDER))
+        .border_color(rgba(p().border))
         .child(drag_region)
         .child(status_inline(s))
         .child(div().ml_2().child(icon_button(
@@ -405,14 +564,14 @@ fn title_bar(s: &PlaybackSnapshot, show_settings: bool, cx: &mut Context<RootVie
             Glyph::Sliders,
             32.0,
             if show_settings {
-                rgb(ACCENT)
+                rgb(p().accent)
             } else {
-                rgb(MUTED)
+                rgb(p().muted)
             },
             if show_settings {
-                rgba(0x6C8CFF29)
+                rgba(p().accent_soft)
             } else {
-                rgba(HOVER)
+                rgba(p().hover)
             },
             cx.listener(|this, _, _, cx| {
                 this.show_settings = !this.show_settings;
@@ -424,24 +583,24 @@ fn title_bar(s: &PlaybackSnapshot, show_settings: bool, cx: &mut Context<RootVie
             "win-min",
             Glyph::Minimize,
             30.0,
-            rgb(MUTED),
-            rgba(HOVER),
+            rgb(p().muted),
+            rgba(p().hover),
             |_, window, _| window.minimize_window(),
         ))
         .child(icon_button(
             "win-max",
             Glyph::Maximize,
             30.0,
-            rgb(MUTED),
-            rgba(HOVER),
+            rgb(p().muted),
+            rgba(p().hover),
             |_, window, _| toggle_maximize(window),
         ))
         .child(icon_button(
             "win-close",
             Glyph::Close,
             30.0,
-            rgb(MUTED),
-            rgba(0xF0444429),
+            rgb(p().muted),
+            rgba(p().close_hover),
             |_, window, _| {
                 #[cfg(target_os = "windows")]
                 if crate::tray::hide_to_tray(window) {
@@ -526,13 +685,13 @@ fn brand_mark() -> Div {
         .rounded_lg()
         .bg(linear_gradient(
             140.0,
-            linear_color_stop(rgb(0x7D9AFF), 0.0),
-            linear_color_stop(rgb(0x3E5BD6), 1.0),
+            linear_color_stop(rgb(p().brand_from), 0.0),
+            linear_color_stop(rgb(p().brand_to), 1.0),
         ))
         .flex()
         .items_center()
         .justify_center()
-        .child(glyph_icon(Glyph::Play, 13.0, rgb(0x0A0D13)))
+        .child(glyph_icon(Glyph::Play, 13.0, rgb(p().on_accent)))
 }
 
 fn hero_card(
@@ -589,13 +748,13 @@ fn hero_card(
                         ),
                         size(bounds.size.width, track_h),
                     );
-                    window.paint_quad(fill(track, rgba(0xFFFFFF14)));
+                    window.paint_quad(fill(track, rgba(p().border)));
                     if frac > 0.0 {
                         let filled = Bounds::new(
                             track.origin,
                             size(track.size.width * frac, track.size.height),
                         );
-                        window.paint_quad(fill(filled, rgb(ACCENT)));
+                        window.paint_quad(fill(filled, rgb(p().accent)));
                     }
                 },
             )
@@ -621,7 +780,7 @@ fn hero_card(
         .child(
             div()
                 .text_size(px(11.5))
-                .text_color(rgb(MUTED))
+                .text_color(rgb(p().muted))
                 .truncate()
                 .child(subtitle),
         )
@@ -634,7 +793,7 @@ fn hero_card(
                 .items_center()
                 .justify_between()
                 .text_size(px(11.0))
-                .text_color(rgb(DIM))
+                .text_color(rgb(p().dim))
                 .child(fmt_time(s.position))
                 .child(format!("-{}", fmt_time((s.duration - s.position).max(0.0)))),
         );
@@ -642,14 +801,14 @@ fn hero_card(
         info = info.child(
             div()
                 .text_size(px(11.0))
-                .text_color(rgb(DIM))
+                .text_color(rgb(p().dim))
                 .child(format!("已播放 {}", fmt_time(s.position))),
         );
     } else {
         info = info.child(
             div()
                 .text_size(px(11.0))
-                .text_color(rgb(DIM))
+                .text_color(rgb(p().dim))
                 .child("① 手机与电脑连同一个 Wi-Fi   ② 视频 App 里点投屏   ③ 选择本机"),
         );
     }
@@ -665,11 +824,11 @@ fn hero_card(
         .rounded_2xl()
         .bg(linear_gradient(
             135.0,
-            linear_color_stop(rgb(SURFACE_HI), 0.0),
-            linear_color_stop(rgb(0x0F141E), 1.0),
+            linear_color_stop(rgb(p().hero_from), 0.0),
+            linear_color_stop(rgb(p().hero_to), 1.0),
         ))
         .border_1()
-        .border_color(rgba(BORDER))
+        .border_color(rgba(p().border))
         .child(artwork(s, playing))
         .child(info)
 }
@@ -691,11 +850,11 @@ fn artwork(s: &PlaybackSnapshot, playing: bool) -> Div {
         .overflow_hidden()
         .bg(linear_gradient(
             150.0,
-            linear_color_stop(rgb(0x33478F), 0.0),
-            linear_color_stop(rgb(0x141A27), 1.0),
+            linear_color_stop(rgb(p().art_from), 0.0),
+            linear_color_stop(rgb(p().art_to), 1.0),
         ))
         .border_1()
-        .border_color(rgba(BORDER_STRONG))
+        .border_color(rgba(p().border_strong))
         .flex()
         .items_center()
         .justify_center()
@@ -705,7 +864,7 @@ fn artwork(s: &PlaybackSnapshot, playing: bool) -> Div {
                 .size(px(86.0))
                 .rounded_full()
                 .border_1()
-                .border_color(rgba(0xFFFFFF0F)),
+                .border_color(rgba(p().hover)),
         )
         .child(
             div()
@@ -713,9 +872,9 @@ fn artwork(s: &PlaybackSnapshot, playing: bool) -> Div {
                 .size(px(60.0))
                 .rounded_full()
                 .border_1()
-                .border_color(rgba(0xFFFFFF0A)),
+                .border_color(rgba(p().divider)),
         )
-        .child(glyph_icon(glyph, 34.0, rgba(0xFFFFFFFF)))
+        .child(glyph_icon(glyph, 34.0, rgb(p().on_art)))
 }
 
 fn transport_dock(
@@ -757,13 +916,13 @@ fn transport_dock(
                         ),
                         size(bounds.size.width, track_h),
                     );
-                    window.paint_quad(fill(track, rgba(0xFFFFFF14)));
+                    window.paint_quad(fill(track, rgba(p().border)));
                     if vol_frac > 0.0 {
                         let filled = Bounds::new(
                             track.origin,
                             size(track.size.width * vol_frac, track.size.height),
                         );
-                        window.paint_quad(fill(filled, rgb(ACCENT)));
+                        window.paint_quad(fill(filled, rgb(p().accent)));
                     }
                 },
             )
@@ -779,9 +938,9 @@ fn transport_dock(
         .gap_2()
         .px_4()
         .rounded_2xl()
-        .bg(rgb(SURFACE))
+        .bg(rgb(p().surface))
         .border_1()
-        .border_color(rgba(BORDER))
+        .border_color(rgba(p().border))
         .child(seek_step_button("seek-back", Direction::Back, cx))
         .child(
             div()
@@ -789,13 +948,16 @@ fn transport_dock(
                 .size(px(46.0))
                 .rounded_full()
                 .bg(if has_media {
-                    rgb(ACCENT)
+                    rgb(p().accent)
                 } else {
-                    rgb(SURFACE_HI)
+                    rgb(p().surface_hi)
                 })
                 .when(has_media, |this| {
-                    this.hover(|s| s.bg(rgb(0x7D9AFF)))
-                        .active(|s| s.bg(rgb(0x5B7BEE)))
+                    this.hover(|s| s.bg(rgb(p().accent_hover)))
+                        .active(|s| s.bg(rgb(p().accent_pressed)))
+                })
+                .when(!has_media, |this| {
+                    this.border_1().border_color(rgba(p().border_strong))
                 })
                 .flex()
                 .items_center()
@@ -805,9 +967,9 @@ fn transport_dock(
                     if playing { Glyph::Pause } else { Glyph::Play },
                     18.0,
                     if has_media {
-                        rgb(ON_ACCENT)
+                        rgb(p().on_accent)
                     } else {
-                        rgb(MUTED)
+                        rgb(p().muted)
                     },
                 ))
                 .on_click(cx.listener(|this, _, _, _| {
@@ -823,8 +985,8 @@ fn transport_dock(
             "stop",
             Glyph::Stop,
             38.0,
-            rgb(MUTED),
-            rgba(HOVER),
+            rgb(p().muted),
+            rgba(p().hover),
             cx.listener(|this, _, _, _| this.stop()),
         ))
         .child(divider(px(22.0)))
@@ -832,8 +994,12 @@ fn transport_dock(
             "mute",
             if s.mute { Glyph::Mute } else { Glyph::Volume },
             38.0,
-            if s.mute { rgb(WARN) } else { rgb(MUTED) },
-            rgba(HOVER),
+            if s.mute {
+                rgb(p().warn)
+            } else {
+                rgb(p().muted)
+            },
+            rgba(p().hover),
             cx.listener(|this, _, _, _| this.toggle_mute()),
         ))
         .child(volume_bar)
@@ -841,7 +1007,7 @@ fn transport_dock(
             div()
                 .w(px(38.0))
                 .text_size(px(11.0))
-                .text_color(rgb(MUTED))
+                .text_color(rgb(p().muted))
                 .child(format!("{}%", s.volume)),
         )
         .child(div().flex_1())
@@ -853,7 +1019,7 @@ fn transport_dock(
         ))
 }
 
-fn footer(s: &PlaybackSnapshot, core: &MacastCore) -> Div {
+fn footer(s: &PlaybackSnapshot, runtime_backend: &str, fallback: bool) -> Div {
     let addresses = if s.ips.is_empty() {
         "未找到可用网卡".to_string()
     } else {
@@ -866,7 +1032,7 @@ fn footer(s: &PlaybackSnapshot, core: &MacastCore) -> Div {
         .gap_4()
         .px_1()
         .text_size(px(11.0))
-        .text_color(rgb(DIM))
+        .text_color(rgb(p().dim))
         .child(
             div()
                 .flex()
@@ -878,8 +1044,16 @@ fn footer(s: &PlaybackSnapshot, core: &MacastCore) -> Div {
         )
         .child(
             div()
+                .flex()
+                .items_center()
+                .gap_2()
                 .flex_shrink_0()
-                .child(format!("{} 后端", core.engine.player.name())),
+                .when(fallback, |this| this.text_color(rgb(p().warn)))
+                .child(if fallback {
+                    format!("{runtime_backend} 后端 · mpv 回退")
+                } else {
+                    format!("{runtime_backend} 后端")
+                }),
         )
 }
 
@@ -891,7 +1065,7 @@ fn backdrop(cx: &mut Context<RootView>) -> Stateful<Div> {
         .left(px(0.0))
         .right(px(0.0))
         .bottom(px(0.0))
-        .bg(rgba(0x05070C99))
+        .bg(rgba(p().backdrop))
         .on_click(cx.listener(|this, _, _, cx| {
             this.show_settings = false;
             cx.notify();
@@ -903,6 +1077,8 @@ fn settings_panel(
     actual_port: u16,
     ips: &[String],
     autostart: bool,
+    runtime_backend: &str,
+    fallback: bool,
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
     let mpv_path = config
@@ -920,34 +1096,32 @@ fn settings_panel(
         .flex_col()
         .gap_5()
         .child(section(
-            "设备",
-            vec![
-                setting_row("名称", div().child(config.friendly_name.clone())),
-                setting_row(
-                    "端口",
-                    div().child(if config.port == actual_port {
-                        format!("{actual_port}")
-                    } else {
-                        format!("{} → {}", config.port, actual_port)
-                    }),
-                ),
-                setting_row(
-                    "地址",
-                    div().truncate().child(if ips.is_empty() {
-                        "—".to_string()
-                    } else {
-                        ips.join("  ·  ")
-                    }),
-                ),
-            ],
-        ))
-        .child(section(
             "播放",
             vec![
-                setting_row("后端", segmented_player(config.player, cx)),
+                setting_row(
+                    "当前运行",
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .when(fallback, |this| this.text_color(rgb(p().warn)))
+                        .child(runtime_backend.to_string())
+                        .when(fallback, |this| {
+                            this.child(
+                                div()
+                                    .px(px(6.0))
+                                    .h(px(18.0))
+                                    .rounded_full()
+                                    .bg(rgba((p().warn << 8) | 0x24))
+                                    .text_size(px(10.0))
+                                    .child("mpv 回退"),
+                            )
+                        }),
+                ),
+                setting_row("启动后端", segmented_player(config.player, cx)),
                 setting_row(
                     "mpv 路径",
-                    div().truncate().text_color(rgb(MUTED)).child(mpv_path),
+                    div().truncate().text_color(rgb(p().muted)).child(mpv_path),
                 ),
                 setting_row(
                     "投屏时全屏",
@@ -958,6 +1132,20 @@ fn settings_panel(
                     ),
                 ),
             ],
+        ))
+        .when(fallback, |this| {
+            this.child(
+                div()
+                    .pt_1()
+                    .text_size(px(10.5))
+                    .line_height(px(16.0))
+                    .text_color(rgb(p().warn))
+                    .child("mpv 未能启动，已回退到 null。检查 PATH 或 config.json 里的 mpv_path。"),
+            )
+        })
+        .child(section(
+            "外观",
+            vec![setting_row("主题", segmented_theme(config.theme, cx))],
         ))
         .child(section(
             "系统",
@@ -981,13 +1169,35 @@ fn settings_panel(
                 ),
             ],
         ))
+        .child(section(
+            "设备",
+            vec![
+                setting_row("名称", div().child(config.friendly_name.clone())),
+                setting_row(
+                    "端口",
+                    div().child(if config.port == actual_port {
+                        format!("{actual_port}")
+                    } else {
+                        format!("{} → {}", config.port, actual_port)
+                    }),
+                ),
+                setting_row(
+                    "地址",
+                    div().truncate().child(if ips.is_empty() {
+                        "—".to_string()
+                    } else {
+                        ips.join("  ·  ")
+                    }),
+                ),
+            ],
+        ))
         .child(
             div()
                 .pt_2()
                 .text_size(px(11.0))
                 .line_height(px(17.0))
-                .text_color(rgb(DIM))
-                .child("名称、端口、mpv 路径请编辑 config.json 后重启应用。"),
+                .text_color(rgb(p().dim))
+                .child("名称、端口、mpv 路径请编辑 config.json 后重启应用；后端切换重启后生效。"),
         );
 
     div()
@@ -999,11 +1209,11 @@ fn settings_panel(
         .w(px(348.0))
         .bg(linear_gradient(
             180.0,
-            linear_color_stop(rgb(0x121824), 0.0),
-            linear_color_stop(rgb(0x0D121A), 1.0),
+            linear_color_stop(rgb(p().panel_from), 0.0),
+            linear_color_stop(rgb(p().panel_to), 1.0),
         ))
         .border_l_1()
-        .border_color(rgba(BORDER))
+        .border_color(rgba(p().border))
         .flex()
         .flex_col()
         .on_click(|_, _, cx| cx.stop_propagation())
@@ -1016,7 +1226,7 @@ fn settings_panel(
                 .justify_between()
                 .px_6()
                 .border_b_1()
-                .border_color(rgba(BORDER))
+                .border_color(rgba(p().border))
                 .child(
                     div()
                         .text_size(px(15.0))
@@ -1027,8 +1237,8 @@ fn settings_panel(
                     "close-settings",
                     Glyph::Close,
                     30.0,
-                    rgb(MUTED),
-                    rgba(HOVER),
+                    rgb(p().muted),
+                    rgba(p().hover),
                     cx.listener(|this, _, _, cx| {
                         this.show_settings = false;
                         cx.notify();
@@ -1044,7 +1254,7 @@ fn section(label: &'static str, rows: Vec<Div>) -> Div {
             .pb_2()
             .text_size(px(11.0))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(rgb(DIM))
+            .text_color(rgb(p().dim))
             .child(label),
     );
     for row in rows {
@@ -1061,20 +1271,22 @@ fn setting_row(label: &'static str, value: impl IntoElement) -> Div {
         .gap_4()
         .min_h(px(46.0))
         .border_b_1()
-        .border_color(rgba(0xFFFFFF0A))
+        .border_color(rgba(p().divider))
         .child(
             div()
                 .flex_shrink_0()
                 .text_size(px(12.0))
-                .text_color(rgb(MUTED))
+                .text_color(rgb(p().muted))
                 .child(label),
         )
         .child(
             div()
                 .flex()
                 .justify_end()
+                .min_w(px(0.0))
+                .overflow_hidden()
                 .text_size(px(12.5))
-                .text_color(rgb(TEXT))
+                .text_color(rgb(p().text))
                 .child(value),
         )
 }
@@ -1093,11 +1305,11 @@ fn toast(message: String, cx: &mut Context<RootView>) -> Div {
                 .px_4()
                 .py_2()
                 .rounded_full()
-                .bg(rgb(0x1B2333))
+                .bg(rgb(p().toast_bg))
                 .border_1()
-                .border_color(rgba(0x6C8CFF40))
+                .border_color(rgba(p().accent_border))
                 .text_size(px(12.0))
-                .text_color(rgb(TEXT))
+                .text_color(rgb(p().text))
                 .cursor_pointer()
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.notice = None;
@@ -1111,19 +1323,19 @@ fn toast(message: String, cx: &mut Context<RootView>) -> Div {
 
 fn status_dot(state: TransportState) -> Div {
     let color = match state {
-        TransportState::Playing => SUCCESS,
-        TransportState::PausedPlayback => WARN,
-        _ => DIM,
+        TransportState::Playing => p().success,
+        TransportState::PausedPlayback => p().warn,
+        _ => p().dim,
     };
     div().size(px(6.0)).rounded_full().bg(rgb(color))
 }
 
 fn status_inline(s: &PlaybackSnapshot) -> Div {
     let (label, color) = match s.transport_state {
-        TransportState::Playing => ("正在播放", SUCCESS),
-        TransportState::PausedPlayback => ("已暂停", WARN),
-        TransportState::Stopped => ("已停止", MUTED),
-        TransportState::NoMediaPresent => ("待机", MUTED),
+        TransportState::Playing => ("正在播放", p().success),
+        TransportState::PausedPlayback => ("已暂停", p().warn),
+        TransportState::Stopped => ("已停止", p().muted),
+        TransportState::NoMediaPresent => ("待机", p().muted),
     };
     div()
         .flex()
@@ -1140,10 +1352,10 @@ fn status_inline(s: &PlaybackSnapshot) -> Div {
 
 fn status_chip(s: &PlaybackSnapshot) -> Div {
     let (label, color) = match s.transport_state {
-        TransportState::Playing => ("正在播放", SUCCESS),
-        TransportState::PausedPlayback => ("已暂停", WARN),
-        TransportState::Stopped => ("已停止", MUTED),
-        TransportState::NoMediaPresent => ("待机", MUTED),
+        TransportState::Playing => ("正在播放", p().success),
+        TransportState::PausedPlayback => ("已暂停", p().warn),
+        TransportState::Stopped => ("已停止", p().muted),
+        TransportState::NoMediaPresent => ("待机", p().muted),
     };
     div()
         .flex()
@@ -1160,7 +1372,7 @@ fn status_chip(s: &PlaybackSnapshot) -> Div {
 }
 
 fn divider(height: Pixels) -> Div {
-    div().w(px(1.0)).h(height).bg(rgba(0xFFFFFF12))
+    div().w(px(1.0)).h(height).bg(rgba(p().divider))
 }
 
 fn segmented_player(current: PlayerKind, cx: &mut Context<RootView>) -> Div {
@@ -1178,9 +1390,13 @@ fn segmented_player(current: PlayerKind, cx: &mut Context<RootView>) -> Div {
             .items_center()
             .cursor_pointer()
             .text_size(px(11.5))
-            .text_color(if active { rgb(TEXT) } else { rgb(MUTED) })
-            .when(active, |this| this.bg(rgb(0x2A3550)))
-            .when(!active, |this| this.hover(|s| s.bg(rgba(HOVER))))
+            .text_color(if active {
+                rgb(p().text)
+            } else {
+                rgb(p().muted)
+            })
+            .when(active, |this| this.bg(rgb(p().segment_active)))
+            .when(!active, |this| this.hover(|s| s.bg(rgba(p().hover))))
             .child(label);
         if !active {
             button = button.on_click(cx.listener(move |this, _, _, cx| {
@@ -1196,9 +1412,9 @@ fn segmented_player(current: PlayerKind, cx: &mut Context<RootView>) -> Div {
         .gap_1()
         .p(px(2.0))
         .rounded_lg()
-        .bg(rgb(0x0B0F17))
+        .bg(rgb(p().inset))
         .border_1()
-        .border_color(rgba(BORDER))
+        .border_color(rgba(p().border))
         .child(option(
             "player-mpv",
             "mpv",
@@ -1215,6 +1431,69 @@ fn segmented_player(current: PlayerKind, cx: &mut Context<RootView>) -> Div {
         ))
 }
 
+fn segmented_theme(current: Theme, cx: &mut Context<RootView>) -> Div {
+    let option = |id: &'static str,
+                  label: &'static str,
+                  active: bool,
+                  theme: Theme,
+                  cx: &mut Context<RootView>| {
+        let mut button = div()
+            .id(id)
+            .px(px(9.0))
+            .h(px(24.0))
+            .rounded_md()
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .text_size(px(11.5))
+            .text_color(if active {
+                rgb(p().text)
+            } else {
+                rgb(p().muted)
+            })
+            .when(active, |this| this.bg(rgb(p().segment_active)))
+            .when(!active, |this| this.hover(|s| s.bg(rgba(p().hover))))
+            .child(label);
+        if !active {
+            button = button.on_click(cx.listener(move |this, _, _, cx| {
+                this.set_theme(theme, cx);
+            }));
+        }
+        button
+    };
+
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .p(px(2.0))
+        .rounded_lg()
+        .bg(rgb(p().inset))
+        .border_1()
+        .border_color(rgba(p().border))
+        .child(option(
+            "theme-auto",
+            "自动",
+            current == Theme::Auto,
+            Theme::Auto,
+            cx,
+        ))
+        .child(option(
+            "theme-light",
+            "亮色",
+            current == Theme::Light,
+            Theme::Light,
+            cx,
+        ))
+        .child(option(
+            "theme-dark",
+            "暗色",
+            current == Theme::Dark,
+            Theme::Dark,
+            cx,
+        ))
+}
+
 fn switch(
     id: &'static str,
     on: bool,
@@ -1226,18 +1505,25 @@ fn switch(
         .h(px(22.0))
         .p(px(2.0))
         .rounded_full()
-        .bg(if on { rgb(ACCENT) } else { rgb(0x2B3446) })
+        .bg(if on {
+            rgb(p().accent)
+        } else {
+            rgb(p().switch_off)
+        })
         .flex()
         .items_center()
         .when(on, |this| this.justify_end())
         .when(!on, |this| this.justify_start())
         .cursor_pointer()
         .hover(|this| this.opacity(0.9))
-        .child(div().size(px(18.0)).rounded_full().bg(if on {
-            rgb(0xFFFFFF)
-        } else {
-            rgb(0x8B94A7)
-        }))
+        .child(
+            div()
+                .size(px(18.0))
+                .rounded_full()
+                .bg(rgb(p().knob))
+                .border_1()
+                .border_color(rgba(p().border)),
+        )
         .on_click(on_click)
 }
 
@@ -1264,11 +1550,11 @@ fn seek_step_button(
         .items_center()
         .gap_1()
         .cursor_pointer()
-        .hover(|this| this.bg(rgba(HOVER)))
-        .active(|this| this.bg(rgba(0xFFFFFF1A)))
+        .hover(|this| this.bg(rgba(p().hover)))
+        .active(|this| this.bg(rgba(p().active)))
         .text_size(px(11.0))
-        .text_color(rgb(MUTED))
-        .child(glyph_icon(glyph, 12.0, rgb(MUTED)))
+        .text_color(rgb(p().muted))
+        .child(glyph_icon(glyph, 12.0, rgb(p().muted)))
         .child("10s")
         .on_click(cx.listener(move |this, _, _, _| this.nudge_position(delta)))
 }
@@ -1289,12 +1575,12 @@ fn text_button(
         .gap_2()
         .cursor_pointer()
         .text_size(px(11.5))
-        .text_color(rgb(MUTED))
-        .hover(|this| this.bg(rgba(HOVER)).text_color(rgb(TEXT)))
-        .active(|this| this.bg(rgba(0xFFFFFF1A)))
+        .text_color(rgb(p().muted))
+        .hover(|this| this.bg(rgba(p().hover)).text_color(rgb(p().text)))
+        .active(|this| this.bg(rgba(p().active)))
         .on_click(on_click);
     if let Some(glyph) = glyph {
-        button = button.child(glyph_icon(glyph, 13.0, rgb(MUTED)));
+        button = button.child(glyph_icon(glyph, 13.0, rgb(p().muted)));
     }
     button.child(label)
 }
@@ -1318,7 +1604,7 @@ fn icon_button(
         .justify_center()
         .cursor_pointer()
         .hover(move |this| this.bg(hover_bg))
-        .active(move |this| this.bg(rgba(0xFFFFFF1F)))
+        .active(move |this| this.bg(rgba(p().active)))
         .child(glyph_icon(glyph, size * 0.46, icon_color))
         .on_click(on_click)
 }

@@ -21,6 +21,16 @@ pub enum PlayerKind {
     Null,
 }
 
+/// Window colour theme. `Auto` follows the OS appearance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Stable device UUID (persisted so phones remember the device across restarts).
@@ -37,6 +47,9 @@ pub struct Config {
     /// Open the mpv window fullscreen when a cast starts.
     #[serde(default = "default_true")]
     pub mpv_fullscreen: bool,
+    /// Window colour theme; `auto` follows the OS.
+    #[serde(default)]
+    pub theme: Theme,
     /// Seconds between SSDP `ssdp:alive` announcements.
     #[serde(default = "default_notify_secs")]
     pub ssdp_notify_secs: u64,
@@ -66,6 +79,7 @@ impl Default for Config {
             player: PlayerKind::Mpv,
             mpv_path: None,
             mpv_fullscreen: true,
+            theme: Theme::Auto,
             ssdp_notify_secs: default_notify_secs(),
             max_age: default_max_age(),
         }
@@ -159,6 +173,7 @@ mod tests {
             .expect("legacy config parses");
         assert_eq!(cfg.player, PlayerKind::Mpv);
         assert!(cfg.mpv_fullscreen);
+        assert_eq!(cfg.theme, Theme::Auto);
         assert_eq!(cfg.ssdp_notify_secs, 30);
         assert_eq!(cfg.max_age, 1800);
     }
