@@ -449,14 +449,12 @@ impl Render for RootView {
         set_palette(palette);
 
         let runtime_backend = self.core.engine.player.name();
-        let fallback_label = if runtime_backend == "null" {
-            match self.core.engine.config.player {
-                PlayerKind::Mpv => Some("mpv 回退"),
-                PlayerKind::Alhazen => Some("初始化失败"),
-            }
-        } else {
-            None
-        };
+        let fallback_label: Option<&'static str> =
+            if runtime_backend != "mpv" && runtime_backend != "alhazen" {
+                Some("初始化失败")
+            } else {
+                None
+            };
         let backend_fallback = fallback_label.is_some();
         let s = self.snapshot.clone();
         let playing = s.transport_state == TransportState::Playing;
