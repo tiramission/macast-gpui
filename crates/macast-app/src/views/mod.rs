@@ -348,6 +348,22 @@ impl RootView {
         self.save_config("投屏全屏", cx);
     }
 
+    fn toggle_tray(&mut self, cx: &mut Context<Self>) {
+        self.config.tray_enabled = !self.config.tray_enabled;
+        match self.config.save() {
+            Ok(()) => {
+                let label = if self.config.tray_enabled {
+                    "开启"
+                } else {
+                    "关闭"
+                };
+                self.set_notice(format!("系统托盘：{label}（重启应用后生效）"), cx);
+            }
+            Err(e) => self.set_notice(format!("保存配置失败：{e}"), cx),
+        }
+        cx.notify();
+    }
+
     fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
         if self.config.theme == theme {
             return;
@@ -1207,6 +1223,14 @@ fn settings_panel(
         .child(section(
             "系统",
             vec![
+                setting_row(
+                    "系统托盘",
+                    switch(
+                        "switch-tray",
+                        config.tray_enabled,
+                        cx.listener(|this, _, _, cx| this.toggle_tray(cx)),
+                    ),
+                ),
                 setting_row(
                     "开机自启",
                     switch(

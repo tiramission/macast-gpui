@@ -142,10 +142,10 @@ fn main() {
             })
             .expect("failed to open the main window");
 
-        // Windows: keep running in the system tray. Closing the window hides
-        // it instead of quitting; the tray menu can restore it or exit.
+        // Windows: system tray. When `tray_enabled` is true, closing the
+        // window hides it to the tray; otherwise the window close quits.
         #[cfg(target_os = "windows")]
-        {
+        if core.engine.config.tray_enabled {
             let any: AnyWindowHandle = window.into();
             match tray::start(any, cx) {
                 Ok(()) => {

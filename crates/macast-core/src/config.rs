@@ -60,6 +60,10 @@ pub struct Config {
     /// `CACHE-CONTROL: max-age` advertised in SSDP announcements.
     #[serde(default = "default_max_age")]
     pub max_age: u32,
+    /// Show the system tray icon; closing the window hides to tray instead
+    /// of quitting. When `false`, closing the window exits the app.
+    #[serde(default = "default_true")]
+    pub tray_enabled: bool,
 }
 
 fn default_notify_secs() -> u64 {
@@ -86,6 +90,7 @@ impl Default for Config {
             theme: Theme::Auto,
             ssdp_notify_secs: default_notify_secs(),
             max_age: default_max_age(),
+            tray_enabled: true,
         }
     }
 }
