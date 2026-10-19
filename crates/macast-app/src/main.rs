@@ -93,9 +93,12 @@ fn main() {
         cx.activate(true);
 
         let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(780.0), px(560.0)), cx)),
+            window_bounds: Some(WindowBounds::centered(size(px(900.0), px(560.0)), cx)),
+            window_min_size: Some(size(px(760.0), px(480.0))),
             titlebar: Some(TitlebarOptions {
                 title: Some("Macast-Gpui".into()),
+                // Custom titlebar: the app draws its own header/controls.
+                appears_transparent: true,
                 ..Default::default()
             }),
             ..Default::default()

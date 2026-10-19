@@ -20,7 +20,9 @@ use tray_icon::{
 };
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    SetForegroundWindow, ShowWindow, ShowWindowAsync, SW_HIDE, SW_SHOW,
+};
 
 /// Set once the tray icon exists. The close handler only hides the window when
 /// the tray can bring it back.
@@ -28,18 +30,29 @@ static TRAY_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Set by the tray's "退出" item so the close handler stops vetoing.
 static QUITTING: AtomicBool = AtomicBool::new(false);
 
+/// Hide the main window to the tray. Returns `true` if the window was hidden.
+pub fn hide_to_tray(window: &mut Window) -> bool {
+    if !TRAY_ACTIVE.load(Ordering::SeqCst) {
+        return false;
+    }
+    let Some(hwnd) = window_hwnd(window) else {
+        return false;
+    };
+    unsafe {
+        // Async: hiding from a gpui event handler must not re-enter the
+        // window procedure while gpui holds state borrows.
+        let _ = ShowWindowAsync(HWND(hwnd as *mut core::ffi::c_void), SW_HIDE);
+    }
+    true
+}
+
 /// Whether closing the window should hide it instead of quitting.
 pub fn on_close_requested(window: &mut Window) -> bool {
-    if !TRAY_ACTIVE.load(Ordering::SeqCst) || QUITTING.load(Ordering::SeqCst) {
+    if QUITTING.load(Ordering::SeqCst) || !TRAY_ACTIVE.load(Ordering::SeqCst) {
         return true;
     }
-    if let Some(hwnd) = window_hwnd(window) {
-        unsafe {
-            let _ = ShowWindow(HWND(hwnd as *mut core::ffi::c_void), SW_HIDE);
-        }
-    }
-    // Veto the close: the window is hidden, the process keeps running.
-    false
+    // Veto the close when the window was hidden; the tray can restore it.
+    !hide_to_tray(window)
 }
 
 /// Create the icon and start polling its menu/click events on gpui's executor.

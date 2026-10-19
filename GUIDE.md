@@ -361,7 +361,16 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 
 ### P4 · UI 完善（gpui）
 
-读 `macast-app/src/views/mod.rs`。当前已有：状态徽章、标题、进度条（点击 Seek、±10 秒）、播放/暂停/停止/静音/复制链接、音量条、网络信息、设置面板、拖拽本地文件播放。可继续做：
+读 `macast-app/src/views/mod.rs`。界面已按"影音控制台"重做（2026-10）：
+
+- **设计令牌**：深色 surface 阶梯（`BG #0A0D13` / `SURFACE #121722` / `SURFACE_HI #171E2C`）、单一强调色 `#6C8CFF`、语义色只用于状态（播放绿 / 暂停琥珀 / 待机灰）、文字三级（`TEXT` / `MUTED` / `DIM`）。
+- **布局**：46px 自绘标题栏（品牌、状态、设置、最小化/最大化/关闭）+ Now Playing 卡片（封面图形、状态 chip、标题、进度、时间）+ 64px 悬浮控制栏 + 窄 footer。内容区 `max_w 1100 / max_h 440`，最大化时自动居中。
+- **组件**：`icon_button` / `text_button` / `switch` / 分段控件 / toast，全部用 `div` + `canvas` 组合；图标是矢量路径（播放、暂停、停止、音量、静音、滑杆、关闭、最小化、最大化、10s 箭头、复制、投屏、均衡器）。
+- **设置**：右侧滑出面板（348px）+ 半透明遮罩，点击面板内部不关闭（`cx.stop_propagation()`），点遮罩/关闭按钮关闭。
+- **Windows 细节**：gpui 0.2.2 的 `start_window_move` 在 Windows 上是空实现，自绘标题栏拖动用 `WM_NCLBUTTONDOWN + HTCAPTION`；最大化/最小化/隐藏用 `ShowWindowAsync`，避免在事件处理里同步 `ShowWindow` 触发 `RefCell already borrowed`（会让 surface 不 resize）。
+- 截图：`docs/screenshot-idle.png` / `docs/screenshot-playing.png`（Windows 150% 缩放实拍）。
+
+可继续做：
 - 应用内文本输入（gpui 0.2.2 没有 Input 元素，需自己处理 key_down + IME，工作量大）
 - 字幕开关（`DisplayCurrentSubtitle` 状态变量已留好）
 - 投屏历史 / 最近播放列表
@@ -444,7 +453,11 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | 投屏全屏 | 单测检查每次投屏的 mpv 命令序列 | `fullscreen=true` 在 `loadfile` 之前发送；`mpv_fullscreen=false` 可关闭 |
 | GPU 加速 | 启动日志 | `Using GPU: Intel Iris Xe` + `Created device with Direct3D 11.1`（硬件 D3D11；`0x887A002D` 只是 debug layer 缺失） |
 | 启动耗时 | 进程启动到主窗口可见（3 次） | **0.24–0.25s**（优化前 6.2s，见 §8 排查表） |
-| 点击 Seek / 拖拽播放 / 设置面板 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
+| UI 重设计（视觉） | 150% 缩放下截取 idle / playing / settings / 最大化 / 最小尺寸 | 布局无溢出，内容在 1100×440 内居中；截图见 `docs/` |
+| 自绘标题栏交互 | 模拟鼠标：拖动、双击最大化/还原、点关闭 | 窗口可拖动；最大化后 surface 正确 resize；关闭隐藏到托盘 |
+| 设置滑出层 | 点设置图标 → 点面板内部 → 点遮罩 | 打开正常；点面板内部不关闭（stop_propagation）；点遮罩关闭 |
+| 提示条 | 点「复制链接」 | 底部 toast 出现并 4s 自动消失 |
+| 点击 Seek / 拖拽播放 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
 
 > 顺带修掉一个隐藏 bug：`http_date_now()` 的星期索引算错（1970-01-01 会输出 `Fri`），已改为 `(days + 4) % 7` 并补了单元测试。
 
