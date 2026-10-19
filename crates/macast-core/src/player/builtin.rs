@@ -101,7 +101,7 @@ impl Player for BuiltinPlayer {
     }
 
     fn name(&self) -> &'static str {
-        "builtin"
+        "libmpv"
     }
 }
 

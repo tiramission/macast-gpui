@@ -1505,9 +1505,16 @@ fn segmented_player(current: PlayerKind, cx: &mut Context<RootView>) -> Div {
         ))
         .child(option(
             "player-libmpv",
-            "内置",
+            "libmpv",
             current == PlayerKind::Libmpv,
             PlayerKind::Libmpv,
+            cx,
+        ))
+        .child(option(
+            "player-alhazen",
+            "alhazen",
+            current == PlayerKind::Alhazen,
+            PlayerKind::Alhazen,
             cx,
         ))
         .child(option(
