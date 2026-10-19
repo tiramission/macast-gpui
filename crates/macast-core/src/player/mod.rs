@@ -5,7 +5,7 @@
 //! Events flow the other way through a broadcast channel and are translated
 //! into UPnP state variable changes + GENA notifications.
 
-pub mod builtin;
+pub mod alhazen;
 pub mod mpv;
 pub mod video_host;
 
@@ -75,9 +75,9 @@ pub async fn build_player(
             Ok(p) => Arc::new(p),
             Err(e) => {
                 tracing::error!("failed to start mpv backend ({e})");
-                Arc::new(builtin::BuiltinPlayer::new(video_host, fullscreen))
+                Arc::new(alhazen::AlhazenPlayer::new(video_host, fullscreen))
             }
         },
-        PlayerKind::Alhazen => Arc::new(builtin::BuiltinPlayer::new(video_host, fullscreen)),
+        PlayerKind::Alhazen => Arc::new(alhazen::AlhazenPlayer::new(video_host, fullscreen)),
     }
 }

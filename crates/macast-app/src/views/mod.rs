@@ -172,6 +172,8 @@ pub struct RootView {
     volume_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// Alhazen video player entity (only when alhazen backend is active).
     alhazen_player: Option<gpui::Entity<VideoPlayer>>,
+    /// Whether the alhazen video is in fullscreen mode.
+    alhazen_fullscreen: bool,
     /// Last cast URI for the alhazen player lifecycle.
     alhazen_last_uri: Option<String>,
     /// Timestamp of the last titlebar click, for double-click to maximize.
@@ -218,6 +220,7 @@ impl RootView {
             seek_bounds: Rc::new(Cell::new(Bounds::default())),
             volume_bounds: Rc::new(Cell::new(Bounds::default())),
             alhazen_player: None,
+            alhazen_fullscreen: false,
             alhazen_last_uri: None,
             last_title_click: None,
             _appearance_sub: None,
@@ -461,10 +464,22 @@ impl Render for RootView {
         let is_alhazen = runtime_backend == "alhazen" || self.config.player == PlayerKind::Alhazen;
 
         // Alhazen backend: create a VideoPlayer entity for the current cast.
+        // When fullscreen is enabled, make the gpui window fullscreen too.
+        if is_alhazen && self.config.mpv_fullscreen {
+            let new_cast = has_media && self.alhazen_last_uri.as_deref() != Some(s.uri.as_str());
+            if new_cast && !window.is_fullscreen() {
+                window.toggle_fullscreen();
+                self.alhazen_fullscreen = true;
+            }
+        }
         if is_alhazen {
             if !has_media {
                 self.alhazen_player = None;
                 self.alhazen_last_uri = None;
+                if window.is_fullscreen() {
+                    window.toggle_fullscreen();
+                    self.alhazen_fullscreen = false;
+                }
             } else if self.alhazen_last_uri.as_deref() != Some(s.uri.as_str()) {
                 self.alhazen_last_uri = Some(s.uri.clone());
                 let source = Source::parse(&s.uri)
@@ -477,6 +492,23 @@ impl Render for RootView {
             }
         } else {
             self.alhazen_player = None;
+            if self.alhazen_fullscreen {
+                self.alhazen_fullscreen = false;
+                if window.is_fullscreen() {
+                    window.toggle_fullscreen();
+                }
+            }
+        }
+
+        // Alhazen fullscreen: render video_view covering the entire window.
+        if is_alhazen && self.alhazen_fullscreen {
+            if let Some(player) = &self.alhazen_player {
+                return div()
+                    .id("video-fullscreen")
+                    .size_full()
+                    .bg(rgb(0x000000))
+                    .child(alhazen_gpui::video_view(player.clone()).size_full());
+            }
         }
 
         let mut root = div()

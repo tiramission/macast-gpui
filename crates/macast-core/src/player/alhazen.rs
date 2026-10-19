@@ -10,13 +10,13 @@ use super::{Player, PlayerEvent};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-pub struct BuiltinPlayer {
+pub struct AlhazenPlayer {
     events: broadcast::Sender<PlayerEvent>,
     host: Arc<dyn VideoHost>,
     fullscreen: bool,
 }
 
-impl BuiltinPlayer {
+impl AlhazenPlayer {
     pub fn new(host: Option<Arc<dyn VideoHost>>, fullscreen: bool) -> Self {
         let (events, _) = broadcast::channel(256);
         let host: Arc<dyn VideoHost> = match host {
@@ -38,7 +38,7 @@ impl BuiltinPlayer {
 }
 
 #[async_trait::async_trait]
-impl Player for BuiltinPlayer {
+impl Player for AlhazenPlayer {
     async fn set_media_url(&self, url: &str, start_secs: f64, title: &str) {
         self.host.post(VideoCommand::Play {
             url: url.to_string(),
@@ -85,15 +85,15 @@ impl Player for BuiltinPlayer {
     }
 
     async fn add_subtitle(&self, _url: &str, _title: &str) {
-        tracing::debug!("[builtin] subtitles are not supported yet");
+        tracing::debug!("[alhazen] subtitles are not supported yet");
     }
 
     async fn set_subtitle_visible(&self, _visible: bool) {
-        tracing::debug!("[builtin] subtitles are not supported yet");
+        tracing::debug!("[alhazen] subtitles are not supported yet");
     }
 
     async fn show_text(&self, _text: &str, _duration_ms: u64) {
-        tracing::debug!("[builtin] on-screen text is not supported yet");
+        tracing::debug!("[alhazen] on-screen text is not supported yet");
     }
 
     async fn shutdown(&self) {
@@ -105,7 +105,7 @@ impl Player for BuiltinPlayer {
     }
 
     fn name(&self) -> &'static str {
-        "libmpv"
+        "alhazen"
     }
 }
 
