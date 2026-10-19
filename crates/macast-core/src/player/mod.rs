@@ -6,7 +6,7 @@
 //! into UPnP state variable changes + GENA notifications.
 
 pub mod alhazen;
-pub mod mpv;
+pub mod libmpv;
 pub mod video_host;
 
 use crate::config::{PlayerConfig, PlayerKind};
@@ -36,6 +36,15 @@ pub enum PlayerEvent {
     Error(String),
 }
 
+/// One decoded picture, ready to be turned into a UI image.
+#[derive(Clone)]
+pub struct VideoFrame {
+    pub width: u32,
+    pub height: u32,
+    /// BGRA rows, tightly packed: `width * height * 4` bytes.
+    pub bgra: Arc<[u8]>,
+}
+
 /// A player backend. All methods are async because they may talk to an
 /// external process or a network service.
 #[async_trait::async_trait]
@@ -57,6 +66,17 @@ pub trait Player: Send + Sync + 'static {
     async fn shutdown(&self) {}
     fn events(&self) -> broadcast::Receiver<PlayerEvent>;
     fn name(&self) -> &'static str;
+
+    /// Latest picture for backends that render inside the app window
+    /// (libmpv). `None` when the backend draws its own window or has no
+    /// frame yet, in which case the UI keeps showing its artwork.
+    fn video_frame(&self) -> Option<VideoFrame> {
+        None
+    }
+
+    /// How large the video is displayed, in device pixels. Backends that
+    /// render for the UI scale down to this before handing frames over.
+    fn set_render_size(&self, _w: u32, _h: u32) {}
 }
 
 /// Build the configured player backend.
@@ -72,12 +92,10 @@ pub async fn build_player(
         // External both drive an external mpv process for now. See
         // docs/plan-inwindow-mpv.md.
         PlayerKind::Mpv => {
-            match mpv::MpvPlayer::spawn(config.mpv.exe_path.clone(), config.fullscreen_on_cast)
-                .await
-            {
+            match libmpv::LibmpvPlayer::new(config.libmpv_path.clone(), config.fullscreen_on_cast) {
                 Ok(p) => Arc::new(p),
                 Err(e) => {
-                    tracing::error!("failed to start mpv backend ({e})");
+                    tracing::error!("mpv backend unavailable ({e}), using alhazen");
                     Arc::new(alhazen::AlhazenPlayer::new(
                         video_host,
                         config.fullscreen_on_cast,

@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 macast-core = { path = "../macast-core" }
 log = "0.4"
+image = "0.25"
 gpui = "0.2.2"
 tokio = { workspace = true }
 anyhow = { workspace = true }

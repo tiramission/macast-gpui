@@ -18,31 +18,11 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayerKind {
-    /// mpv: an external `mpv` process over its JSON IPC socket, or libmpv
-    /// rendering inside the app window (see [`MpvRenderMode`]).
+    /// mpv loaded in-process (`libmpv-2.dll`), rendered inside the app window.
     Mpv,
     /// Pure-Rust media player engine (alhazen-core) - default.
     #[default]
     Alhazen,
-}
-
-/// How the mpv engine produces pictures.
-///
-/// A property of the mpv backend, not a separate backend: both modes drive
-/// the same engine, only where the picture ends up differs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MpvRenderMode {
-    /// Use libmpv inside the app window when `libmpv-2.dll` can be found,
-    /// otherwise fall back to the external mpv process.
-    #[default]
-    Auto,
-    /// Spawn `mpv` and drive it over its JSON IPC socket; needs `mpv`
-    /// (or an explicit `exe_path`).
-    External,
-    /// Load `libmpv-2.dll` in-process and render into the app window; needs
-    /// the DLL (or an explicit `libmpv_path`).
-    Embedded,
 }
 
 /// Window colour theme. `Auto` follows the OS appearance.
@@ -76,17 +56,6 @@ impl Default for DeviceConfig {
     }
 }
 
-/// mpv executable / library locations. Both optional: `None` means "look it up".
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MpvConfig {
-    /// Path to the mpv executable (external mode). `None` = look it up on `PATH`.
-    #[serde(default)]
-    pub exe_path: Option<PathBuf>,
-    /// Path to `libmpv-2.dll` (embedded mode). `None` = probe the usual places.
-    #[serde(default)]
-    pub libmpv_path: Option<PathBuf>,
-}
-
 /// Which engine plays, and how the picture is shown.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerConfig {
@@ -96,12 +65,10 @@ pub struct PlayerConfig {
     /// Enter fullscreen when a cast starts (Esc leaves fullscreen again).
     #[serde(default = "default_true")]
     pub fullscreen_on_cast: bool,
-    /// mpv display mode; ignored when `kind` is not `mpv`.
+    /// Path to `libmpv-2.dll` (mpv backend). `None` = probe the usual
+    /// places (env `MACAST_LIBMPV`, the exe directory, `PATH`, Scoop).
     #[serde(default)]
-    pub render_mode: MpvRenderMode,
-    /// mpv executable / library locations.
-    #[serde(default)]
-    pub mpv: MpvConfig,
+    pub libmpv_path: Option<PathBuf>,
 }
 
 impl Default for PlayerConfig {
@@ -109,8 +76,7 @@ impl Default for PlayerConfig {
         Self {
             kind: PlayerKind::Alhazen,
             fullscreen_on_cast: true,
-            render_mode: MpvRenderMode::Auto,
-            mpv: MpvConfig::default(),
+            libmpv_path: None,
         }
     }
 }
@@ -248,14 +214,17 @@ mod tests {
         let mut cfg = Config::default();
         cfg.device.friendly_name = "客厅电视".into();
         cfg.player.kind = PlayerKind::Mpv;
-        cfg.player.render_mode = MpvRenderMode::Embedded;
+        cfg.player.libmpv_path = Some(PathBuf::from("C:/lib/libmpv-2.dll"));
         cfg.save_to(&path).expect("save");
 
         let loaded = Config::load_from(&path);
         assert_eq!(loaded.device.udn, cfg.device.udn);
         assert_eq!(loaded.device.friendly_name, "客厅电视");
         assert_eq!(loaded.player.kind, PlayerKind::Mpv);
-        assert_eq!(loaded.player.render_mode, MpvRenderMode::Embedded);
+        assert_eq!(
+            loaded.player.libmpv_path.as_deref(),
+            Some(Path::new("C:/lib/libmpv-2.dll"))
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -265,7 +234,7 @@ mod tests {
         let cfg: Config = serde_json::from_str("{}").expect("empty config parses");
         assert_eq!(cfg.player.kind, PlayerKind::Alhazen);
         assert!(cfg.player.fullscreen_on_cast);
-        assert_eq!(cfg.player.render_mode, MpvRenderMode::Auto);
+        assert!(cfg.player.libmpv_path.is_none());
         assert_eq!(cfg.ui.theme, Theme::Auto);
         assert!(cfg.ui.tray_enabled);
         assert_eq!(cfg.network.ssdp_notify_secs, 30);

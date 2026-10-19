@@ -23,6 +23,6 @@ pub mod ssdp;
 pub mod state;
 pub mod util;
 
-pub use config::{Config, MpvRenderMode, PlayerKind, Theme};
+pub use config::{Config, PlayerKind, Theme};
 pub use core::MacastCore;
 pub use state::{PlaybackSnapshot, TransportState};

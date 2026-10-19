@@ -12,9 +12,8 @@
 use alhazen_gpui::{Source, VideoPlayer};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use macast_core::{
-    Config, MacastCore, MpvRenderMode, PlaybackSnapshot, PlayerKind, Theme, TransportState,
-};
+use macast_core::player::{Player, VideoFrame};
+use macast_core::{Config, MacastCore, PlaybackSnapshot, PlayerKind, Theme, TransportState};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -180,39 +179,26 @@ pub struct RootView {
     alhazen_fullscreen: bool,
     /// Esc key state from the previous frame, for edge detection.
     esc_was_down: bool,
+    /// Last mpv frame image, so the next one can drop it from the atlas.
+    mpv_slot: Rc<Cell<Option<Arc<RenderImage>>>>,
     /// `cast_seq` of the cast the alhazen player was built for. Bumped by
     /// the core on every SetAVTransportURI, so re-casting the same uri still
     /// counts as a new cast.
     last_cast_seq: u64,
     /// Timestamp of the last titlebar click, for double-click to maximize.
     last_title_click: Option<std::time::Instant>,
+    /// Our window; async state updates go through it instead of
+    /// `update_entity` - see [`RootView::init`]. `None` until `init`.
+    window_handle: Option<AnyWindowHandle>,
     /// Keeps the OS appearance observer alive (auto theme).
     _appearance_sub: Option<Subscription>,
 }
 
 impl RootView {
-    pub fn new(core: Arc<MacastCore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(core: Arc<MacastCore>) -> Self {
         let mut rx = core.subscribe();
         let initial = rx.borrow_and_update().clone();
-
-        // Watch channel -> view updates. `tokio::sync::watch` futures are
-        // runtime-agnostic, so they play nicely with gpui's own executor.
-        // gpui 0.2 (edition 2024) wants an async closure here.
-        cx.spawn(async move |view, cx| {
-            while rx.changed().await.is_ok() {
-                let snap = rx.borrow_and_update().clone();
-                if view
-                    .update(&mut *cx, |this, cx| {
-                        this.snapshot = snap;
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
+        drop(rx);
 
         let config = core.engine.config.clone();
         let autostart = is_autostart_enabled();
@@ -230,15 +216,52 @@ impl RootView {
             alhazen_player: None,
             alhazen_fullscreen: false,
             esc_was_down: false,
+            mpv_slot: Rc::new(Cell::new(None)),
             last_cast_seq: 0,
             last_title_click: None,
+            window_handle: None,
             _appearance_sub: None,
         }
     }
 
-    /// Repaint when the OS switches between light and dark (auto theme).
-    pub fn watch_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self._appearance_sub = Some(cx.observe_window_appearance(window, |_, _, cx| cx.notify()));
+    /// Called once with the real window: remember the handle, track OS theme
+    /// changes, and start the state watcher.
+    ///
+    /// The watcher deliberately updates the view through
+    /// [`AppContext::update_window`], not `update_entity`. On Windows gpui
+    /// pumps messages from inside frame presents and window-style changes,
+    /// which can run a queued foreground task while the app is still
+    /// borrowed; `update_entity` panics on that ("RefCell already borrowed")
+    /// and takes the app down, while `update_window` uses `try_borrow_mut`
+    /// and simply skips a beat.
+    pub fn init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.window_handle = Some(window.window_handle());
+        self._appearance_sub =
+            Some(cx.observe_window_appearance(window, |_, _, cx| cx.notify()));
+
+        let handle = self.window_handle;
+        let mut rx = self.core.subscribe();
+        self.snapshot = rx.borrow_and_update().clone();
+        // `tokio::sync::watch` futures are runtime-agnostic, so they play
+        // nicely with gpui's own executor. gpui 0.2 (edition 2024) wants an
+        // async closure here.
+        cx.spawn(async move |view, cx| {
+            while rx.changed().await.is_ok() {
+                let snap = rx.borrow_and_update().clone();
+                if view.upgrade().is_none() {
+                    break;
+                }
+                if let Some(handle) = handle {
+                    let _ = cx.update_window(handle, |_, _, cx| {
+                        let _ = view.update(cx, |this, cx| {
+                            this.snapshot = snap;
+                            cx.notify();
+                        });
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     // ---- local control helpers ------------------------------------------
@@ -431,14 +454,24 @@ impl RootView {
         self.notice = Some(message.into());
         self.notice_seq = self.notice_seq.wrapping_add(1);
         let seq = self.notice_seq;
+        let handle = self.window_handle;
         cx.spawn(async move |view, cx| {
             cx.background_executor().timer(Duration::from_secs(4)).await;
-            let _ = view.update(&mut *cx, |this, cx| {
-                if this.notice_seq == seq {
-                    this.notice = None;
-                    cx.notify();
-                }
-            });
+            if view.upgrade().is_none() {
+                return;
+            }
+            // Same graceful update path as the state watcher - see
+            // [`RootView::init`].
+            if let Some(handle) = handle {
+                let _ = cx.update_window(handle, |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        if this.notice_seq == seq {
+                            this.notice = None;
+                            cx.notify();
+                        }
+                    });
+                });
+            }
         })
         .detach();
         cx.notify();
@@ -467,6 +500,7 @@ impl Render for RootView {
         // Only the alhazen cast flow puts the window into fullscreen, so any
         // fullscreen window without the flag should exit it.
         if !self.alhazen_fullscreen && window.is_fullscreen() {
+            tracing::info!("leave fullscreen (flag cleared)");
             window.toggle_fullscreen();
         }
 
@@ -488,12 +522,31 @@ impl Render for RootView {
         }
         let is_alhazen =
             runtime_backend == "alhazen" || self.config.player.kind == PlayerKind::Alhazen;
+        // Both in-window backends: alhazen draws from its entity, mpv from a
+        // frame rendered by libmpv.
+        let is_inline = matches!(runtime_backend, "alhazen" | "mpv");
+        let mpv_paint: Option<MpvPaint> = (runtime_backend == "mpv")
+            .then(|| {
+                let player: Arc<dyn Player> = self.core.engine.player.clone();
+                let frame = player.video_frame()?;
+                Some(MpvPaint {
+                    frame,
+                    slot: self.mpv_slot.clone(),
+                    player,
+                })
+            })
+            .flatten();
 
         // Alhazen backend: create a VideoPlayer entity for the current cast.
         // When fullscreen is enabled, make the gpui window fullscreen too.
-        if is_alhazen && self.config.player.fullscreen_on_cast {
+        if is_inline && self.config.player.fullscreen_on_cast {
             let new_cast = has_media && s.cast_seq != self.last_cast_seq;
             if new_cast && !window.is_fullscreen() {
+                tracing::info!(
+                    "enter fullscreen: cast_seq {} -> {}",
+                    self.last_cast_seq,
+                    s.cast_seq
+                );
                 window.toggle_fullscreen();
                 self.alhazen_fullscreen = true;
             }
@@ -562,6 +615,23 @@ impl Render for RootView {
                     .detach();
                 }
             }
+        } else if is_inline {
+            // mpv backend: the worker owns the video lifecycle; here we only
+            // track cast boundaries and mirror fullscreen transitions. The
+            // cast_seq bookkeeping matters as much as in the alhazen branch —
+            // otherwise every frame re-triggers "new cast" and fights Esc.
+            if s.cast_seq != self.last_cast_seq {
+                self.last_cast_seq = s.cast_seq;
+            }
+            let stopped = !has_media
+                || matches!(
+                    s.transport_state,
+                    TransportState::Stopped | TransportState::NoMediaPresent
+                );
+            if stopped && window.is_fullscreen() {
+                window.toggle_fullscreen();
+                self.alhazen_fullscreen = false;
+            }
         } else {
             self.alhazen_player = None;
             if self.alhazen_fullscreen {
@@ -580,6 +650,24 @@ impl Render for RootView {
                     .size_full()
                     .bg(rgb(0x000000))
                     .child(alhazen_gpui::video_view(player.clone()).size_full());
+            }
+        }
+        // mpv fullscreen: same idea, drawing the libmpv frame edge to edge.
+        if is_inline && !is_alhazen && self.alhazen_fullscreen {
+            if let Some(mpv) = mpv_paint.clone() {
+                return div()
+                    .id("video-fullscreen")
+                    .size_full()
+                    .bg(rgb(0x000000))
+                    .child(
+                        canvas(
+                            move |_, _, _| {},
+                            move |bounds, _, window, _| {
+                                paint_mpv_frame(window, bounds, &mpv);
+                            },
+                        )
+                        .size_full(),
+                    );
             }
         }
 
@@ -614,6 +702,7 @@ impl Render for RootView {
                             playing,
                             has_media,
                             self.alhazen_player.clone(),
+                            mpv_paint,
                             self.seek_bounds.clone(),
                             cx,
                         ))
@@ -852,6 +941,7 @@ fn hero_card(
     playing: bool,
     has_media: bool,
     alhazen_player: Option<gpui::Entity<VideoPlayer>>,
+    mpv_paint: Option<MpvPaint>,
     seek_bounds: Rc<Cell<Bounds<Pixels>>>,
     cx: &mut Context<RootView>,
 ) -> Div {
@@ -967,27 +1057,102 @@ fn hero_card(
         );
     }
 
-    div()
+    // While a picture is on screen it owns the whole hero card: no leftover
+    // idle artwork/metadata stacked over the video. Idle keeps the old layout.
+    let card = div()
         .flex_1()
         .min_h(px(240.0))
         .max_h(px(440.0))
+        .overflow_hidden()
+        .rounded_2xl()
+        .border_1()
+        .border_color(rgba(p().border));
+
+    if let Some(player) = alhazen_player {
+        return card
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(0x000000))
+            .child(alhazen_gpui::video_view(player).size_full());
+    }
+    // mpv backend: the picture arrives as a raw BGRA frame from libmpv.
+    if let Some(mpv) = mpv_paint {
+        return card
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(0x000000))
+            .child(
+                canvas(
+                    move |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        paint_mpv_frame(window, bounds, &mpv);
+                    },
+                )
+                .size_full(),
+            );
+    }
+
+    card
         .flex()
         .items_center()
         .gap_6()
         .p_6()
-        .rounded_2xl()
         .bg(linear_gradient(
             135.0,
             linear_color_stop(rgb(p().hero_from), 0.0),
             linear_color_stop(rgb(p().hero_to), 1.0),
         ))
-        .border_1()
-        .border_color(rgba(p().border))
-        .when_some(alhazen_player.clone(), |this, player| {
-            this.child(alhazen_gpui::video_view(player).w_full().h_full())
-        })
-        .when_none(&alhazen_player, |this| this.child(artwork(s, playing)))
+        .child(artwork(s, playing))
         .child(info)
+}
+
+/// A frame from the libmpv worker plus the bookkeeping needed to paint it.
+#[derive(Clone)]
+struct MpvPaint {
+    frame: VideoFrame,
+    slot: Rc<Cell<Option<Arc<RenderImage>>>>,
+    player: Arc<dyn Player>,
+}
+
+/// Draws one libmpv frame over `bounds`, retiring the previous image from the
+/// sprite atlas and asking for the next animation frame.
+fn paint_mpv_frame(window: &mut Window, bounds: Bounds<Pixels>, mpv: &MpvPaint) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let MpvPaint {
+        frame,
+        slot,
+        player,
+    } = mpv;
+    let scale = window.scale_factor();
+    let w = (f32::from(bounds.size.width) * scale).round().max(2.0) as u32;
+    let h = (f32::from(bounds.size.height) * scale).round().max(2.0) as u32;
+    // Log when the target changes (window resize, fullscreen toggle) - the
+    // frame the worker hands over follows one step behind, which shows up
+    // here as a temporary w/h mismatch.
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let packed = (u64::from(w) << 32) | u64::from(h);
+    if LAST.swap(packed, Ordering::Relaxed) != packed {
+        tracing::info!(
+            "mpv paint: target {w}x{h}, frame {}x{}",
+            frame.width,
+            frame.height
+        );
+    }
+    // Let mpv render at the size we actually show.
+    player.set_render_size(w, h);
+    let Some(buffer) = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra.to_vec())
+    else {
+        return;
+    };
+    let img = Arc::new(RenderImage::new([image::Frame::new(buffer)]));
+    // Drop the previous one so the sprite atlas does not grow per frame.
+    if let Some(old) = slot.replace(Some(img.clone())) {
+        let _ = window.drop_image(old);
+    }
+    let _ = window.paint_image(bounds, Corners::default(), img, 0, false);
+    window.request_animation_frame();
 }
 
 fn artwork(s: &PlaybackSnapshot, playing: bool) -> Div {
@@ -1232,19 +1397,14 @@ fn settings_panel(
     runtime_backend: &str,
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
-    let mpv_path = config
+    // mpv is loaded in-process (libmpv) and rendered inside the window; the
+    // DLL has to be reachable as `libmpv-2.dll` (next to the exe or on PATH).
+    let libmpv_path = config
         .player
-        .mpv
-        .exe_path
+        .libmpv_path
         .as_ref()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "自动（PATH 中的 mpv）".to_string());
-    // Embedded (libmpv) is not wired up yet - see docs/plan-inwindow-mpv.md.
-    let render_mode = match config.player.render_mode {
-        MpvRenderMode::Auto => "自动（暂用外部 mpv 窗口）",
-        MpvRenderMode::External => "外部 mpv 窗口",
-        MpvRenderMode::Embedded => "窗口内渲染（libmpv，待实现）",
-    };
+        .unwrap_or_else(|| "自动（PATH 中的 libmpv-2.dll）".to_string());
 
     // 播放 section: mpv 相关行只在 mpv 后端显示。
     let play_rows: Vec<Div> = {
@@ -1262,19 +1422,20 @@ fn settings_panel(
             ),
             PlayerKind::Mpv => {
                 rows.push(setting_row(
-                    "mpv 程序",
+                    "libmpv",
                     div()
                         .w(px(190.0))
                         .truncate()
                         .text_color(rgb(p().muted))
-                        .child(mpv_path),
+                        .child(libmpv_path),
                 ));
-                rows.push(setting_row(
-                    "渲染方式",
+                rows.push(
                     div()
-                        .text_color(rgb(p().muted))
-                        .child(render_mode),
-                ));
+                        .text_size(px(10.5))
+                        .line_height(px(16.0))
+                        .text_color(rgb(p().dim))
+                        .child("需要 libmpv-2.dll 在 exe 同目录或 PATH 中；画面直接画在窗口内。"),
+                );
             }
         }
         rows.push(setting_row(

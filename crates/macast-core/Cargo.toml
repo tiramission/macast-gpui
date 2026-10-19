@@ -7,6 +7,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+libmpv2 = "6.0"
+libmpv2-sys = "4.0"
 tokio = { workspace = true }
 axum = { workspace = true }
 roxmltree = { workspace = true }
