@@ -129,7 +129,7 @@ fn main() {
 
         let window = cx
             .open_window(window_options, |window, cx| {
-                let view = cx.new(|cx| RootView::new(core.clone(), video_host.clone(), cx));
+                let view = cx.new(|cx| RootView::new(core.clone(), cx));
                 #[cfg(target_os = "windows")]
                 if let Some(host) = &video_host_impl {
                     if let Some(hwnd) = views::window_handle_of(window) {

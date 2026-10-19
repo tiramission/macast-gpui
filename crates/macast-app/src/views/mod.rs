@@ -11,7 +11,6 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use macast_core::player::video_host::{VideoCommand, VideoHost};
 use macast_core::{Config, MacastCore, PlaybackSnapshot, PlayerKind, Theme, TransportState};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -174,24 +173,10 @@ pub struct RootView {
     last_title_click: Option<std::time::Instant>,
     /// Keeps the OS appearance observer alive (auto theme).
     _appearance_sub: Option<Subscription>,
-    /// UI-side host for the built-in video backend (Windows only).
-    video_host: Option<Arc<dyn VideoHost>>,
-    /// Bounds of the hero card, used to place the video surface.
-    video_bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// Last physical rect posted to the video host.
-    last_video_rect: Cell<(i32, i32, i32, i32)>,
-    /// Whether the video surface is currently shown.
-    surface_shown: Cell<bool>,
-    /// URI of the last cast seen, used to trigger fullscreen per cast.
-    last_cast_uri: Option<String>,
 }
 
 impl RootView {
-    pub fn new(
-        core: Arc<MacastCore>,
-        video_host: Option<Arc<dyn VideoHost>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(core: Arc<MacastCore>, cx: &mut Context<Self>) -> Self {
         let mut rx = core.subscribe();
         let initial = rx.borrow_and_update().clone();
 
@@ -229,11 +214,6 @@ impl RootView {
             volume_bounds: Rc::new(Cell::new(Bounds::default())),
             last_title_click: None,
             _appearance_sub: None,
-            video_host,
-            video_bounds: Rc::new(Cell::new(Bounds::default())),
-            last_video_rect: Cell::new((0, 0, 0, 0)),
-            surface_shown: Cell::new(false),
-            last_cast_uri: None,
         }
     }
 
@@ -453,7 +433,6 @@ impl Render for RootView {
             None
         };
         let backend_fallback = fallback_label.is_some();
-        let video_active = runtime_backend == "builtin" && self.video_host.is_some();
 
         let s = self.snapshot.clone();
         let playing = s.transport_state == TransportState::Playing;
@@ -489,8 +468,6 @@ impl Render for RootView {
                             &s,
                             playing,
                             has_media,
-                            video_active,
-                            self.video_bounds.clone(),
                             self.seek_bounds.clone(),
                             cx,
                         ))
@@ -519,55 +496,6 @@ impl Render for RootView {
 
         if let Some(notice) = &self.notice {
             root = root.child(toast(notice.clone(), cx));
-        }
-
-        // Built-in backend: keep the video surface in sync with the UI.
-        if video_active {
-            if let Some(host) = &self.video_host {
-                // Re-casting (any new SetAVTransportURI) re-enters fullscreen
-                // when enabled; a stopped/ended cast resets the marker.
-                if !has_media {
-                    self.last_cast_uri = None;
-                } else if self.config.mpv_fullscreen
-                    && self.last_cast_uri.as_deref() != Some(s.uri.as_str())
-                {
-                    self.last_cast_uri = Some(s.uri.clone());
-                    if !host.is_fullscreen() {
-                        host.post(VideoCommand::EnterFullscreen);
-                    }
-                }
-
-                let bounds = self.video_bounds.get();
-                let scale = window.scale_factor();
-                let rect = (
-                    (f32::from(bounds.origin.x) * scale).round() as i32,
-                    (f32::from(bounds.origin.y) * scale).round() as i32,
-                    (f32::from(bounds.size.width) * scale).round() as i32,
-                    (f32::from(bounds.size.height) * scale).round() as i32,
-                );
-                let desired_show = has_media
-                    && matches!(
-                        s.transport_state,
-                        TransportState::Playing | TransportState::PausedPlayback
-                    );
-                if desired_show && rect != self.last_video_rect.get() && rect.2 > 0 && rect.3 > 0 {
-                    host.post(VideoCommand::MoveSurface {
-                        x: rect.0,
-                        y: rect.1,
-                        w: rect.2,
-                        h: rect.3,
-                    });
-                    self.last_video_rect.set(rect);
-                }
-                if desired_show != self.surface_shown.get() {
-                    host.post(if desired_show {
-                        VideoCommand::ShowSurface
-                    } else {
-                        VideoCommand::HideSurface
-                    });
-                    self.surface_shown.set(desired_show);
-                }
-            }
         }
 
         root
@@ -778,8 +706,6 @@ fn hero_card(
     s: &PlaybackSnapshot,
     playing: bool,
     has_media: bool,
-    video_surface: bool,
-    video_bounds: Rc<Cell<Bounds<Pixels>>>,
     seek_bounds: Rc<Cell<Bounds<Pixels>>>,
     cx: &mut Context<RootView>,
 ) -> Div {
@@ -911,23 +837,8 @@ fn hero_card(
         ))
         .border_1()
         .border_color(rgba(p().border))
-        .relative()
         .child(artwork(s, playing))
         .child(info)
-        // Capture the card bounds so the video surface can be placed over it.
-        .when(video_surface, |this| {
-            this.child(
-                canvas(
-                    move |bounds, _, _| video_bounds.set(bounds),
-                    move |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .w_full()
-                .h_full(),
-            )
-        })
 }
 
 fn artwork(s: &PlaybackSnapshot, playing: bool) -> Div {

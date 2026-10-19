@@ -2,18 +2,12 @@
 //!
 //! Owns a **message-only window** on the main thread. The core-side
 //! `BuiltinPlayer` posts [`VideoCommand`]s to it; the wndproc executes them
-//! (popup-window management + MFPlay calls) on the gpui main thread,
-//! serialised with the rest of the UI. mfplay requires the creating thread to
-//! pump messages and guarantees its callbacks arrive serially on that thread.
+//! on the gpui main thread, serialised with the rest of the UI. mfplay
+//! requires the creating thread to pump messages.
 //!
-//! The video surface is a **top-level `WS_POPUP` window** owned by the gpui
-//! window (not a `WS_CHILD`), because gpui renders through DirectComposition
-//! (`WS_EX_NOREDIRECTIONBITMAP`), which composites ON TOP of child HWNDs —
-//! hiding any video rendered in a child. A separate popup window is composited
-//! by DWM independently and always visible.
-//!
-//! Fullscreen is simply `SetWindowPos(HWND_TOPMOST, monitor_rect)` since the
-//! surface is already a top-level window. Esc is handled in its own wndproc.
+//! The video plays in a **standalone top-level window** (same model as the
+//! mpv backend): the window is created on demand when a cast starts and
+//! hidden when the cast stops. Fullscreen covers the monitor; Esc exits.
 
 use macast_core::player::builtin::{
     map_mfp_event, ns100_to_secs, secs_to_100ns, MfpEventDetail, MfpEventKind,
@@ -23,11 +17,10 @@ use macast_core::player::PlayerEvent;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
-use windows::core::{implement, BOOL, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::core::{implement, PCWSTR};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    ClientToScreen, CreateSolidBrush, GetMonitorInfoW, MonitorFromWindow, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST,
+    CreateSolidBrush, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
@@ -37,11 +30,12 @@ use windows::Win32::System::Variant::VT_I8;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-// Re-add Send wrappers that were dropped in the popup rewrite.
-
 const WM_APP_COMMAND: u32 = WM_APP;
-/// Timer id used for the 1 Hz position poll + surface re-position.
+/// Timer id for the 1 Hz position poll.
 const POSITION_TIMER_ID: usize = 1;
+/// Default video window size.
+const DEFAULT_VIDEO_W: i32 = 960;
+const DEFAULT_VIDEO_H: i32 = 540;
 
 /// COM interface/window raw wrappers are `!Send` only because the bindings are
 /// conservative. Everything below stays in shared state and is only ever
@@ -50,13 +44,10 @@ struct SendPlayer(IMFPMediaPlayer);
 unsafe impl Send for SendPlayer {}
 struct SendHwnd(HWND);
 unsafe impl Send for SendHwnd {}
-/// Kept only to hold the callback COM identity alive; never invoked directly.
 #[allow(dead_code)]
 struct SendCallback(IMFPMediaPlayerCallback);
 unsafe impl Send for SendCallback {}
 
-/// State shared between the public handle, the host wndproc and the mfplay
-/// callback. Everything is main-thread except the atomic handles.
 struct HostShared {
     msg_hwnd: AtomicIsize,
     parent: AtomicIsize,
@@ -65,17 +56,14 @@ struct HostShared {
     inner: Mutex<HostInner>,
 }
 
-/// MFPlay/window objects, only touched on the main thread.
 struct HostInner {
-    surface: Option<SendHwnd>,
+    /// Standalone video window (created on demand).
+    video: Option<SendHwnd>,
     callback: Option<SendCallback>,
-    /// Start position to apply to the next MEDIAITEM_SET event.
     start_secs: f64,
     fullscreen: bool,
-    /// Windowed surface rect (screen coords) to restore when leaving fullscreen.
+    /// Windowed rect to restore when leaving fullscreen.
     windowed_rect: RECT,
-    /// Last client-relative size posted by the UI (for re-positioning).
-    last_client_rect: (i32, i32, i32, i32),
 }
 
 impl HostShared {
@@ -118,14 +106,11 @@ impl HostShared {
     }
 }
 
-/// Public handle handed to `MacastCore::start` as the `VideoHost`.
 pub struct MfVideoHost {
     shared: Arc<HostShared>,
 }
 
 impl MfVideoHost {
-    /// Register window classes and create the message-only window. Must be
-    /// called on the main thread (gpui runs it there).
     pub fn new() -> windows::core::Result<Self> {
         let shared = Arc::new(HostShared {
             msg_hwnd: AtomicIsize::new(0),
@@ -133,18 +118,16 @@ impl MfVideoHost {
             sink: Mutex::new(None),
             mf: Mutex::new(None),
             inner: Mutex::new(HostInner {
-                surface: None,
+                video: None,
                 callback: None,
                 start_secs: 0.0,
                 fullscreen: false,
                 windowed_rect: RECT::default(),
-                last_client_rect: (0, 0, 0, 0),
             }),
         });
 
         unsafe {
             let hinstance = GetModuleHandleW(None)?;
-            // Host (message-only) window class.
             let wc = WNDCLASSW {
                 lpfnWndProc: Some(video_host_wndproc),
                 hInstance: hinstance.into(),
@@ -152,18 +135,15 @@ impl MfVideoHost {
                 ..Default::default()
             };
             RegisterClassW(&wc);
-            // Surface (popup) window class: black background behind the video.
-            let wc_surface = WNDCLASSW {
-                lpfnWndProc: Some(surface_wndproc),
+            let wc_video = WNDCLASSW {
+                lpfnWndProc: Some(video_wndproc),
                 hInstance: hinstance.into(),
-                lpszClassName: surface_class(),
+                lpszClassName: video_class(),
                 hbrBackground: CreateSolidBrush(COLORREF(0)),
                 ..Default::default()
             };
-            RegisterClassW(&wc_surface);
+            RegisterClassW(&wc_video);
 
-            // HWND_MESSAGE parents make this a message-only window: it never
-            // shows, but receives posted messages through gpui's pump.
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 host_class(),
@@ -185,11 +165,8 @@ impl MfVideoHost {
         Ok(Self { shared })
     }
 
-    /// Hand the gpui window over as the owner of the video popup.
-    /// Takes a raw `isize` to bridge across windows crate versions.
     pub fn attach_parent(&self, parent_hwnd: isize) {
         self.shared.parent.store(parent_hwnd, Ordering::Relaxed);
-        self.post(VideoCommand::EnsureCreated);
     }
 }
 
@@ -234,8 +211,6 @@ unsafe extern "system" fn video_host_wndproc(
             if !ptr.is_null() {
                 let shared = ManuallyDrop::new(Arc::from_raw(ptr));
                 poll_position(&shared);
-                let mut inner = shared.inner.lock().unwrap();
-                position_surface(&shared, &mut inner);
             }
             LRESULT(0)
         }
@@ -250,7 +225,7 @@ unsafe extern "system" fn video_host_wndproc(
     }
 }
 
-unsafe extern "system" fn surface_wndproc(
+unsafe extern "system" fn video_wndproc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
@@ -280,7 +255,7 @@ unsafe extern "system" fn surface_wndproc(
 
 // ---- command execution (main thread) --------------------------------------
 
-fn handle_command(shared: &Arc<HostShared>, inner: &mut HostInner, cmd: VideoCommand) {
+unsafe fn handle_command(shared: &Arc<HostShared>, inner: &mut HostInner, cmd: VideoCommand) {
     match cmd {
         VideoCommand::EnsureCreated => unsafe {
             if let Err(e) = ensure_mf(shared, inner) {
@@ -314,6 +289,9 @@ fn handle_command(shared: &Arc<HostShared>, inner: &mut HostInner, cmd: VideoCom
                     let _ = mf.Stop();
                 }
             }
+            // mpv behaviour: force-window=no on stop → hide the video window.
+            exit_fullscreen(inner);
+            hide_video_window(inner);
         }
         VideoCommand::Seek { secs } => {
             if let Some(mf) = shared.player() {
@@ -344,29 +322,41 @@ fn handle_command(shared: &Arc<HostShared>, inner: &mut HostInner, cmd: VideoCom
                 }
             }
         }
-        VideoCommand::MoveSurface { x, y, w, h } => {
-            inner.last_client_rect = (x, y, w, h);
-            unsafe { position_surface(shared, inner) };
-        }
+        // Not meaningful for a standalone window; the host manages its own
+        // video window lifecycle.
+        VideoCommand::MoveSurface { .. } => {}
         VideoCommand::ShowSurface => {
-            if let Some(SendHwnd(surface)) = inner.surface.as_ref() {
-                unsafe {
-                    let _ = ShowWindow(*surface, SW_SHOW);
-                }
-            }
+            show_video_window(inner);
         }
         VideoCommand::HideSurface => unsafe {
             exit_fullscreen(inner);
-            if let Some(SendHwnd(surface)) = inner.surface.as_ref() {
-                let _ = ShowWindow(*surface, SW_HIDE);
-            }
+            hide_video_window(inner);
         },
-        VideoCommand::EnterFullscreen => unsafe { enter_fullscreen(shared, inner) },
+        VideoCommand::EnterFullscreen => unsafe { enter_fullscreen(inner) },
         VideoCommand::Shutdown => unsafe { shutdown_host(shared, inner) },
     }
 }
 
-/// Create the popup video surface + MFPlay. Idempotent.
+/// Create the standalone video window (shown, centered on the parent's
+/// Create MFPlay + video window, then start playing `url`. Idempotent for MF.
+unsafe fn play(shared: &Arc<HostShared>, inner: &mut HostInner, url: &str, start_secs: f64) {
+    if let Err(e) = ensure_mf(shared, inner) {
+        tracing::error!("builtin backend unavailable: {e}");
+        shared.emit(PlayerEvent::Error(e));
+        return;
+    }
+    let Some(mf) = shared.player() else {
+        return;
+    };
+    show_video_window(inner);
+    inner.start_secs = start_secs;
+    let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    if let Err(e) = mf.CreateMediaItemFromURL(PCWSTR::from_raw(wide.as_ptr()), false, 0, None) {
+        shared.emit(PlayerEvent::Error(format!("create media item failed: {e}")));
+    }
+}
+
+/// Create MFPlay (without showing the video window). Idempotent.
 unsafe fn ensure_mf(
     shared: &Arc<HostShared>,
     inner: &mut HostInner,
@@ -374,39 +364,11 @@ unsafe fn ensure_mf(
     if shared.mf.lock().unwrap().is_some() {
         return Ok(());
     }
-    let parent = shared.parent_hwnd();
-    if parent.is_invalid() {
-        return Err("video surface is not attached to a window yet".into());
-    }
-    // gpui's main thread may already be COM-initialised; tolerate both ways.
     let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
-    let hinstance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
-    // Top-level popup window owned by the gpui window: DWM composites it
-    // independently of gpui's DirectComposition content, so it's always
-    // visible. Starts hidden; ShowSurface reveals it.
-    let surface = CreateWindowExW(
-        WINDOW_EX_STYLE(0),
-        surface_class(),
-        PCWSTR::null(),
-        WS_POPUP | WS_VISIBLE,
-        0,
-        0,
-        320,
-        180,
-        Some(parent), // owner: stays above gpui, no taskbar entry
-        None,
-        Some(hinstance.into()),
-        None,
-    )
-    .map_err(|e| format!("create video surface failed: {e}"))?;
-    SetWindowLongPtrW(
-        surface,
-        GWLP_USERDATA,
-        Arc::into_raw(shared.clone()) as isize,
-    );
-    inner.surface = Some(SendHwnd(surface));
-
+    // Create the real video window (hidden) so MFPlay binds to the correct
+    // HWND from the start - EVR renders into whichever HWND it was given.
+    let video = create_video_window(shared, inner)?;
     let callback: IMFPMediaPlayerCallback = MfCallback {
         shared: shared.clone(),
     }
@@ -417,7 +379,7 @@ unsafe fn ensure_mf(
         false,
         MFP_CREATION_OPTIONS(0),
         &callback,
-        Some(surface),
+        Some(video),
         Some(&mut mf),
     )
     .map_err(|e| format!("MFPCreateMediaPlayer failed: {e}"))?;
@@ -425,82 +387,71 @@ unsafe fn ensure_mf(
     *shared.mf.lock().unwrap() = Some(SendPlayer(mf.clone()));
     inner.callback = Some(SendCallback(callback));
 
-    // 1 Hz position/duration poll + surface re-position (tracks parent moves).
     SetTimer(Some(shared.msg_hwnd()), POSITION_TIMER_ID, 1000, None);
     Ok(())
 }
 
-unsafe fn play(shared: &Arc<HostShared>, inner: &mut HostInner, url: &str, start_secs: f64) {
-    if let Err(e) = ensure_mf(shared, inner) {
-        tracing::error!("builtin backend unavailable: {e}");
-        shared.emit(PlayerEvent::Error(e));
-        return;
+/// Create the standalone video window (hidden, centered on the parent's
+/// monitor). Called by `ensure_mf` before MFPlay binds to it.
+unsafe fn create_video_window(
+    shared: &Arc<HostShared>,
+    inner: &mut HostInner,
+) -> std::result::Result<HWND, String> {
+    if let Some(SendHwnd(video)) = inner.video.as_ref() {
+        return Ok(*video);
     }
-    let Some(mf) = shared.player() else {
-        return;
-    };
-    inner.start_secs = start_secs;
-    let wide: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
-    if let Err(e) = mf.CreateMediaItemFromURL(PCWSTR::from_raw(wide.as_ptr()), false, 0, None) {
-        shared.emit(PlayerEvent::Error(format!("create media item failed: {e}")));
-    }
-    // The MEDIAITEM_SET callback applies start_secs, then calls SetMediaItem
-    // (which begins playback) and emits Loaded/Duration/show-surface.
-}
-
-/// Convert the stored client-relative rect to screen coords and position the
-/// popup surface. Called on MoveSurface and by the 1 Hz timer (tracks parent
-/// window movement).
-unsafe fn position_surface(shared: &Arc<HostShared>, inner: &mut HostInner) {
-    if inner.fullscreen {
-        return; // the surface covers the monitor; ignore windowed moves
-    }
-    let Some(SendHwnd(surface)) = inner.surface.as_ref() else {
-        return;
-    };
     let parent = shared.parent_hwnd();
-    if parent.is_invalid() {
-        return;
-    }
-    let (cx, cy, cw, ch) = inner.last_client_rect;
-    if cw <= 0 || ch <= 0 {
-        return;
-    }
-    // Client area origin in screen coordinates.
-    let mut origin = POINT { x: 0, y: 0 };
-    let _ = ClientToScreen(parent, &mut origin);
-    let _ = SetWindowPos(
-        *surface,
-        None,
-        origin.x + cx,
-        origin.y + cy,
-        cw,
-        ch,
-        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW,
-    );
-}
-
-unsafe fn enter_fullscreen(shared: &Arc<HostShared>, inner: &mut HostInner) {
-    if inner.fullscreen {
-        return;
-    }
-    let Some(SendHwnd(surface)) = inner.surface.as_ref() else {
-        return;
-    };
-    let parent = shared.parent_hwnd();
-    let mut r = RECT::default();
-    let _ = GetWindowRect(*surface, &mut r);
-    inner.windowed_rect = r;
     let monitor = MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST);
+    let mut mi = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    let _ = GetMonitorInfoW(monitor, &mut mi);
+    let rc = &mi.rcMonitor;
+    let x = rc.left + (rc.right - rc.left - DEFAULT_VIDEO_W) / 2;
+    let y = rc.top + (rc.bottom - rc.top - DEFAULT_VIDEO_H) / 2;
+
+    let hinstance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
+    let video = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        video_class(),
+        windows::core::w!("Macast-Gpui Player"),
+        WS_OVERLAPPEDWINDOW, // hidden (no WS_VISIBLE); shown on Play
+        x,
+        y,
+        DEFAULT_VIDEO_W,
+        DEFAULT_VIDEO_H,
+        None,
+        None,
+        Some(hinstance.into()),
+        None,
+    )
+    .map_err(|e| format!("create video window failed: {e}"))?;
+    SetWindowLongPtrW(video, GWLP_USERDATA, Arc::into_raw(shared.clone()) as isize);
+    inner.video = Some(SendHwnd(video));
+    Ok(video)
+}
+
+unsafe fn enter_fullscreen(inner: &mut HostInner) {
+    if inner.fullscreen {
+        return;
+    }
+    let Some(SendHwnd(video)) = inner.video.as_ref() else {
+        return;
+    };
+    let mut r = RECT::default();
+    let _ = GetWindowRect(*video, &mut r);
+    inner.windowed_rect = r;
+    let monitor = MonitorFromWindow(*video, MONITOR_DEFAULTTONEAREST);
     let mut mi = MONITORINFO {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
     if GetMonitorInfoW(monitor, &mut mi).as_bool() {
         let rc = mi.rcMonitor;
-        // Already a top-level popup: just cover the monitor.
+        let _ = SetWindowLongPtrW(*video, GWL_STYLE, (WS_POPUP | WS_VISIBLE).0 as isize);
         let _ = SetWindowPos(
-            *surface,
+            *video,
             Some(HWND_TOPMOST),
             rc.left,
             rc.top,
@@ -509,7 +460,7 @@ unsafe fn enter_fullscreen(shared: &Arc<HostShared>, inner: &mut HostInner) {
             SWP_NOACTIVATE,
         );
         inner.fullscreen = true;
-        let _ = SetFocus(Some(*surface)); // Esc is handled by the surface wndproc
+        let _ = SetFocus(Some(*video));
     }
 }
 
@@ -517,12 +468,17 @@ unsafe fn exit_fullscreen(inner: &mut HostInner) {
     if !inner.fullscreen {
         return;
     }
-    let Some(SendHwnd(surface)) = inner.surface.as_ref() else {
+    let Some(SendHwnd(video)) = inner.video.as_ref() else {
         return;
     };
+    let _ = SetWindowLongPtrW(
+        *video,
+        GWL_STYLE,
+        (WS_OVERLAPPEDWINDOW | WS_VISIBLE).0 as isize,
+    );
     let r = inner.windowed_rect;
     let _ = SetWindowPos(
-        *surface,
+        *video,
         None,
         r.left,
         r.top,
@@ -531,7 +487,18 @@ unsafe fn exit_fullscreen(inner: &mut HostInner) {
         SWP_NOZORDER | SWP_NOACTIVATE,
     );
     inner.fullscreen = false;
-    // Focus returns to the gpui window naturally when the surface loses it.
+}
+
+unsafe fn show_video_window(inner: &mut HostInner) {
+    if let Some(SendHwnd(video)) = inner.video.as_ref() {
+        let _ = ShowWindow(*video, SW_SHOW);
+    }
+}
+
+unsafe fn hide_video_window(inner: &mut HostInner) {
+    if let Some(SendHwnd(video)) = inner.video.as_ref() {
+        let _ = ShowWindow(*video, SW_HIDE);
+    }
 }
 
 unsafe fn shutdown_host(shared: &Arc<HostShared>, inner: &mut HostInner) {
@@ -540,8 +507,8 @@ unsafe fn shutdown_host(shared: &Arc<HostShared>, inner: &mut HostInner) {
         let _ = mf.Shutdown();
     }
     inner.callback = None;
-    if let Some(SendHwnd(surface)) = inner.surface.take() {
-        let _ = DestroyWindow(surface);
+    if let Some(SendHwnd(video)) = inner.video.take() {
+        let _ = DestroyWindow(video);
     }
 }
 
@@ -577,7 +544,7 @@ impl IMFPMediaPlayerCallback_Impl for MfCallback_Impl {
                 MFP_EVENT_TYPE_MEDIAITEM_SET => MfpEventKind::MediaItemSet,
                 MFP_EVENT_TYPE_ERROR => MfpEventKind::Error,
                 MFP_EVENT_TYPE_PLAYBACK_ENDED => MfpEventKind::PlaybackEnded,
-                _ => return, // frame-step / buffering / credentials: ignored
+                _ => return,
             };
 
             let mut detail = MfpEventDetail::default();
@@ -587,14 +554,9 @@ impl IMFPMediaPlayerCallback_Impl for MfCallback_Impl {
                 let e = &*(peventheader as *const MFP_MEDIAITEM_SET_EVENT);
                 if let Some(item) = e.pMediaItem.as_ref() {
                     media_item = Some(item.clone());
-                    let mut has_video = BOOL(0);
-                    let mut selected = BOOL(0);
-                    let _ = item.HasVideo(Some(&mut has_video), Some(&mut selected));
-                    detail.has_video = has_video.as_bool();
                     if let Ok(pv) = item.GetDuration(&MFP_POSITIONTYPE_100NS) {
                         detail.duration_secs = prop_as_secs(&pv);
                     }
-                    // Apply the start position before playback begins.
                     let start = {
                         let mut inner = self.shared.inner.lock().unwrap();
                         let start = inner.start_secs;
@@ -624,7 +586,6 @@ impl IMFPMediaPlayerCallback_Impl for MfCallback_Impl {
             if set_media_item {
                 if let Some(mf) = self.shared.player() {
                     if let Some(item) = media_item.as_ref() {
-                        // SetMediaItem queues the item and begins playback.
                         let _ = mf.SetMediaItem(item);
                     }
                 }
@@ -633,13 +594,12 @@ impl IMFPMediaPlayerCallback_Impl for MfCallback_Impl {
             for event in action.events {
                 self.shared.emit(event);
             }
-            if let Some(show) = action.show_surface {
-                let cmd = if show {
-                    VideoCommand::ShowSurface
-                } else {
-                    VideoCommand::HideSurface
-                };
-                self.shared.post_cmd(cmd);
+
+            // mpv behaviour: hide the video window when playback ends.
+            if kind == MfpEventKind::PlaybackEnded {
+                let mut inner = self.shared.inner.lock().unwrap();
+                exit_fullscreen(&mut inner);
+                hide_video_window(&mut inner);
             }
         }
     }
@@ -650,7 +610,6 @@ impl IMFPMediaPlayerCallback_Impl for MfCallback_Impl {
 fn prop_i64(v: i64) -> PROPVARIANT {
     let mut pv = PROPVARIANT::default();
     unsafe {
-        // Union fields need an explicit DerefMut reborrow through ManuallyDrop.
         let slot = &mut *pv.Anonymous.Anonymous;
         slot.vt = VT_I8;
         slot.Anonymous.hVal = v;
@@ -674,12 +633,10 @@ fn host_class() -> PCWSTR {
     leaked_wide("MacastGpuiVideoHost")
 }
 
-fn surface_class() -> PCWSTR {
-    leaked_wide("MacastGpuiVideoSurface")
+fn video_class() -> PCWSTR {
+    leaked_wide("MacastGpuiVideoPlayer")
 }
 
-/// Wide string leaked on purpose: class names are only registered/used at
-/// startup, and `w!` is not reachable without pinning `windows-strings`.
 fn leaked_wide(s: &str) -> PCWSTR {
     let wide: Vec<u16> = s.encode_utf16().chain(Some(0)).collect();
     PCWSTR::from_raw(Box::leak(wide.into_boxed_slice()).as_ptr())
