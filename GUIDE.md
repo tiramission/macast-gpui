@@ -441,6 +441,8 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | 托盘常驻 | 日志 `tray icon created`；用 Win32 消息模拟左键、关闭、菜单退出 | 关闭后窗口隐藏且进程存活；托盘点击恢复可见；退出触发 `shutting down MacastCore` |
 | 应用图标 | `LoadImageW(exe, 1, IMAGE_ICON)` + `GetClassLongPtr(GCLP_HICON)` | 资源 ID 1 存在（16–256 px），窗口类图标句柄非 0 |
 | mpv 空闲窗口 | 检查启动参数与日志 | `--force-window=no`，投屏时置 yes、Stop 复位（本机未装 mpv，未实机） |
+| GPU 加速 | 启动日志 | `Using GPU: Intel Iris Xe` + `Created device with Direct3D 11.1`（硬件 D3D11；`0x887A002D` 只是 debug layer 缺失） |
+| 启动耗时 | 进程启动到主窗口可见（3 次） | **0.24–0.25s**（优化前 6.2s，见 §8 排查表） |
 | 点击 Seek / 拖拽播放 / 设置面板 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
 
 > 顺带修掉一个隐藏 bug：`http_date_now()` 的星期索引算错（1970-01-01 会输出 `Fri`），已改为 `(days + 4) % 7` 并补了单元测试。
@@ -488,6 +490,7 @@ cargo build --release -p macast-app
 | 端口 1900 被占用 | 系统里已有 SSDP 服务 | Windows 下 `SO_REUSEADDR` 可共存；不行就排查其它投屏软件 |
 | 编译 gpui 失败 | 缺 VS C++ 生成工具 / 旧版 Rust | 装 "Desktop development with C++"；用最新 stable |
 | release 报 `Failed to find fxc.exe` | gpui 只查 PATH 和固定版本 SDK | 设 `GPUI_FXC_PATH=...\Windows Kits\10\bin\<ver>\x64\fxc.exe` |
+| 双击启动卡 5–6 秒 | 首帧前同步 spawn 子进程（原 `is_autostart_enabled` 调 `reg.exe`），被杀软/系统拖慢 | 改用 `windows-registry` 直读注册表；不要在 `RootView::new` 里 spawn 进程 |
 | mpv 起不来 | 不在 PATH / 路径带空格 | `mpv_path` 写绝对路径；看启动日志的错误信息 |
 
 ### 8.1 gpui 0.2.2 API 备忘（与 Zed 主仓源码有差异，本骨架已验证）

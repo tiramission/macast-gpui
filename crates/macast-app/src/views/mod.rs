@@ -741,18 +741,20 @@ fn open_in_default_app(path: &Path) -> std::io::Result<()> {
 // ---- start-at-login (Windows registry Run key) ---------------------------
 
 #[cfg(target_os = "windows")]
-const AUTOSTART_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const AUTOSTART_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(target_os = "windows")]
 const AUTOSTART_VALUE: &str = "MacastGpui";
 
 fn is_autostart_enabled() -> bool {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("reg")
-            .args(["query", AUTOSTART_KEY, "/v", AUTOSTART_VALUE])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
+        // Read the registry directly instead of spawning `reg.exe`: spawning a
+        // child process here used to block the first frame for ~6 seconds on a
+        // cold start (security software scanning the child).
+        windows_registry::CURRENT_USER
+            .open(AUTOSTART_KEY)
+            .and_then(|key| key.get_string(AUTOSTART_VALUE))
+            .is_ok()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -763,35 +765,19 @@ fn is_autostart_enabled() -> bool {
 fn set_autostart(enable: bool) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let exe = std::env::current_exe()?;
-        let status = if enable {
+        let key = windows_registry::CURRENT_USER
+            .open(AUTOSTART_KEY)
+            .map_err(|e| std::io::Error::other(format!("{e}")))?;
+        if enable {
+            let exe = std::env::current_exe()?;
             let quoted = format!("\"{}\"", exe.display());
-            std::process::Command::new("reg")
-                .args([
-                    "add",
-                    AUTOSTART_KEY,
-                    "/v",
-                    AUTOSTART_VALUE,
-                    "/t",
-                    "REG_SZ",
-                    "/d",
-                    quoted.as_str(),
-                    "/f",
-                ])
-                .status()?
-        } else {
-            std::process::Command::new("reg")
-                .args(["delete", AUTOSTART_KEY, "/v", AUTOSTART_VALUE, "/f"])
-                .status()?
-        };
-        if status.success() {
-            Ok(())
-        } else {
-            Err(std::io::Error::other(format!(
-                "reg.exe 返回 {}",
-                status.code().unwrap_or(-1)
-            )))
+            key.set_string(AUTOSTART_VALUE, quoted)
+                .map_err(|e| std::io::Error::other(format!("{e}")))?;
+        } else if key.get_string(AUTOSTART_VALUE).is_ok() {
+            key.remove_value(AUTOSTART_VALUE)
+                .map_err(|e| std::io::Error::other(format!("{e}")))?;
         }
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
