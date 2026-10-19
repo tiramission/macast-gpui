@@ -104,6 +104,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 ```bash
 cargo test -p macast-core          # 协议/工具函数单元测试
 cargo fmt --all -- --check         # CI 同款格式检查
+python scripts/tray_smoke_test.py --quit   # Windows 托盘：关闭隐藏/点击恢复/菜单退出（先启动应用）
 ```
 
 CI（GitHub Actions，Windows）会在每次推送时跑格式检查、核心测试和应用编译。
