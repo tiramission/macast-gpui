@@ -33,5 +33,5 @@ jobs:
       - name: Test core
         run: cargo test -p macast-core
 
-      - name: Check app (parallelism capped: gpui trips rustc on Windows)
+      - name: "Check app (parallelism capped: gpui trips rustc on Windows)"
         run: cargo check -p macast-app -j 2
