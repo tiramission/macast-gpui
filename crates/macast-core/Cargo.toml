@@ -1,0 +1,23 @@
+[package]
+name = "macast-core"
+description = "DLNA/UPnP MediaRenderer core: SSDP discovery, device description, SOAP control (AVTransport/RenderingControl/ConnectionManager), GENA eventing and a pluggable player backend."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+roxmltree = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+socket2 = { workspace = true }
+if-addrs = { workspace = true }
+rand = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }

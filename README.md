@@ -1,0 +1,118 @@
+# Macast-Gpui
+
+用 **Rust + gpui** 复刻 [Macast](https://github.com/xfangfang/Macast)：一个跨平台的 **DLNA 媒体接收端（投屏接收器）**。手机视频 App 的"投屏"列表里会出现你的电脑，点一下即可把视频/图片/音乐推过来，由 mpv 播放。
+
+```
+macast-gpui/
+├── GUIDE.md               # 复刻实施指南（架构解析 / 协议细节 / 分阶段路线 / 测试方法）
+├── crates/
+│   ├── macast-core/       # DLNA/UPnP 协议核心（无 UI，可独立测试）
+│   └── macast-app/        # gpui 桌面界面
+```
+
+## 功能
+
+- **SSDP 设备发现**：多网卡组播、M-SEARCH 应答（MX 抖动 + 同子网选路）、周期性 `ssdp:alive` / 退出 `ssdp:byebye`
+- **完整 MediaRenderer 设备**：`/description.xml` + 三个服务（AVTransport / RenderingControl / ConnectionManager）的 SCPD 描述
+- **SOAP 控制**：`SetAVTransportURI`（含 DIDL-Lite 元数据标题解析）、`Play/Pause/Stop/Seek`、音量/静音、`GetProtocolInfo` 等全部查询动作
+- **GENA 事件订阅**：SUBSCRIBE/UNSUBSCRIBE/续期，初始全量推送 + `LastChange` 增量推送
+- **mpv 播放后端**：外部 mpv 进程 + JSON IPC（与 Macast 同方案），属性观察实时回传进度/时长/播放状态
+- **gpui 界面**：播放状态、标题、进度条、播放控制、音量、一键复制投屏链接、网络信息
+- **可插拔播放器**：`Player` trait；无 mpv 环境可用 `null` 后端联调协议
+
+## 快速开始
+
+### 依赖
+
+- Rust stable（建议 ≥ 1.90，开发用的是 1.96）
+- **mpv**（Windows：装 mpv 并确保 `mpv.exe` 在 PATH；或在配置里写绝对路径）
+  - 没有 mpv 也能跑：把配置里的 `player` 改为 `"null"`，用于联调 DLNA 协议
+
+### 运行
+
+```bash
+cargo run -p macast-app
+```
+
+首次运行会在配置目录生成 `config.json`（含设备 UDN，**请保留**，删除后手机会当成新设备）：
+
+- Windows: `%APPDATA%\macast-gpui\config.json`
+- macOS: `~/Library/Application Support/macast-gpui/config.json`
+- Linux: `~/.config/macast-gpui/config.json`
+
+```json
+{
+  "udn": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "friendly_name": "Macast-Gpui(你的电脑名)",
+  "port": 5069,
+  "player": "mpv",
+  "mpv_path": null,
+  "ssdp_notify_secs": 30,
+  "max_age": 1800
+}
+```
+
+### 测试投屏
+
+1. 手机和电脑连**同一局域网**（同一网段，别用访客网络）
+2. 打开手机视频 App 的"投屏 / TV / Cast"，列表里选择 `Macast-Gpui(...)`
+3. 桌面端控制端：VLC（视图 → 播放列表 → Universal Plug'n'Play）或 Kodi
+4. 手动测 SOAP：
+
+```bash
+curl -i -X POST http://127.0.0.1:5069/AVTransport/action \
+  -H 'SOAPACTION: "urn:schemas-upnp-org:service:AVTransport:1#GetTransportInfo"' \
+  --data '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetTransportInfo xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><InstanceID>0</InstanceID></u:GetTransportInfo></s:Body></s:Envelope>'
+```
+
+浏览器打开 `http://127.0.0.1:5069/` 可以看到实时状态 JSON。
+
+更多测试手段、打包分发、常见坑排查见 **[GUIDE.md](GUIDE.md)**。
+
+## 构建
+
+```bash
+cargo build --release -p macast-app   # 产物 target/release/macast-app.exe
+```
+
+> **Windows 上编译 gpui 如果遇到 rustc 崩溃**（`STATUS_STACK_BUFFER_OVERRUN`，exit code `0xc0000409`）：
+> 这是 gpui 这个超大 crate 在本机环境下的已知问题，与代码无关。两种绕过方式（任选）：
+>
+> ```bash
+> cargo build -p macast-app -j 2                              # 限制并行度
+> CARGO_PROFILE_DEV_DEBUG=false cargo build -p macast-app    # 关调试信息，减轻 codegen 压力
+> ```
+>
+> 先跑 `cargo check -p macast-app -j 2` 验证代码也无妨（只做元数据检查，最稳）。
+
+## 架构
+
+```
+手机(DLNA Control Point)
+  │ SSDP M-SEARCH / NOTIFY
+  ▼
+macast-core（tokio + axum + socket2）
+  ├─ ssdp.rs        组播发现与通告
+  ├─ http.rs        /description.xml · /dlna/*.xml · POST /{Service}/action · SUBSCRIBE /{Service}/event
+  ├─ services/      AVTransport / RenderingControl / ConnectionManager 动作处理
+  ├─ state.rs       UPnP 状态变量 + UI 快照（watch 通道）
+  ├─ eventing.rs    GENA 订阅表 + LastChange NOTIFY
+  └─ player/        Player trait ← mpv.rs（JSON IPC）/ null.rs
+        │
+macast-app（gpui）── watch::Receiver<PlaybackSnapshot> ──► RootView 重绘
+```
+
+与 Macast 原版（Python）的模块对应关系见 GUIDE.md §4.1。
+
+## 已知边界 / Roadmap
+
+- [ ] 托盘图标 + 最小化到托盘（gpui 无内置托盘 API，方案见 GUIDE §9）
+- [ ] 设置界面（当前改 `config.json`）
+- [ ] 点击进度条跳转（Seek）
+- [ ] AirPlay / Chromecast 协议（协议完全不同，工作量大）
+- [ ] 视频嵌入 gpui 窗口（mpv render API → wgpu 纹理）
+
+## 致谢与许可
+
+- 协议行为参照 [Macast](https://github.com/xfangfang/Macast)（MIT）实现；`macast-core/assets/` 下的 SCPD 与 SinkProtocolInfo 来自该项目（见 `assets/NOTICE.txt`）
+- 本项目代码以 MIT 许可发布

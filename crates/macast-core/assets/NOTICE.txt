@@ -1,0 +1,11 @@
+# UPnP/DLNA protocol assets (SCPD service descriptions + protocol info table)
+#
+# These files are copied from the Macast project (https://github.com/xfangfang/Macast),
+# which is licensed under the MIT License (Copyright (c) 2021 by xfangfang).
+# They are in turn derived from the UPnP AV specifications published by the UPnP Forum.
+#
+# They are embedded via include_str!/include_bytes! at build time and served to
+# DLNA control points (phones, Kodi, VLC, ...) that fetch SCPD documents.
+#
+# If you plan to redistribute this project, keep this notice and the MIT license
+# text of Macast alongside these files.

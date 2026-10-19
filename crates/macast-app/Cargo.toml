@@ -1,0 +1,16 @@
+[package]
+name = "macast-app"
+description = "gpui desktop app for the Macast-Gpui DLNA media renderer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+macast-core = { path = "../macast-core" }
+gpui = "0.2.2"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
+arboard = "3"
