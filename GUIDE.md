@@ -370,7 +370,8 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 - **Windows 细节**：gpui 0.2.2 的 `start_window_move` 在 Windows 上是空实现，自绘标题栏拖动用 `WM_NCLBUTTONDOWN + HTCAPTION`；最大化/最小化/隐藏用 `ShowWindowAsync`，避免在事件处理里同步 `ShowWindow` 触发 `RefCell already borrowed`（会让 surface 不 resize）。
 - 主题：`Config.theme`（`auto` / `light` / `dark`，默认 auto），渲染时用 `window.appearance()` 解析；`observe_window_appearance` 负责系统主题变化时重绘。设置里的分段控件即时生效，不需要重启。
 - 后端展示：设置面板区分「当前运行」（`core.engine.player.name()`）与「启动后端」（`config.player`）；当启动配置是 mpv 但实际回退 null 时，给出琥珀色「mpv 回退」chip 和排查提示；footer 同步标记。
-- 截图：`docs/screenshot-idle.png` / `docs/screenshot-playing.png` / `docs/screenshot-light.png`（Windows 150% 缩放实拍）。
+- 截图：`docs/screenshot-idle.png` / `docs/screenshot-playing.png` / `docs/screenshot-light.png`（Windows 150% 缩放实拍，抓取用 PrintWindow + 像素校验，不受遮挡影响）。
+- 测试视频注意：供 mpv 经 HTTP 播放的样片**必须带 `-movflags +faststart`**（moov 在尾部时 mpv 探测失败，0.5s 内直接 end-file → 状态 Stopped）；测试音轨用 `anullsrc` 静音，避免截图/测试时出声。
 
 可继续做：
 - 应用内文本输入（gpui 0.2.2 没有 Input 元素，需自己处理 key_down + IME，工作量大）

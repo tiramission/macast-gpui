@@ -4,7 +4,9 @@
 
 用 **Rust + gpui** 复刻 [Macast](https://github.com/xfangfang/Macast)：一个跨平台的 **DLNA 媒体接收端（投屏接收器）**。手机视频 App 的"投屏"列表里会出现你的电脑，点一下即可把视频/图片/音乐推过来，由 mpv 播放。
 
-![Macast-Gpui 界面](docs/screenshot-playing.png)
+| 暗色主题 | 亮色主题（跟随系统） |
+|:---:|:---:|
+| ![暗色主题](docs/screenshot-playing.png) | ![亮色主题](docs/screenshot-light.png) |
 
 ```
 macast-gpui/
