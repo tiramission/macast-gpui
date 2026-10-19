@@ -180,6 +180,11 @@ impl RootView {
         self.save_config("播放后端", cx);
     }
 
+    fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
+        self.config.mpv_fullscreen = !self.config.mpv_fullscreen;
+        self.save_config("投屏全屏", cx);
+    }
+
     fn open_config(&mut self, cx: &mut Context<Self>) {
         // Make sure the file exists before handing it to the OS.
         if let Err(e) = self.config.save() {
@@ -574,6 +579,14 @@ fn settings_card(
         .child(info_row("播放后端", player.to_string()))
         .child(info_row("mpv 路径", mpv_path))
         .child(info_row(
+            "投屏全屏",
+            if config.mpv_fullscreen {
+                "开启"
+            } else {
+                "关闭"
+            },
+        ))
+        .child(info_row(
             "开机自启",
             if autostart { "已开启" } else { "未开启" },
         ))
@@ -602,6 +615,27 @@ fn settings_card(
                         .text_xs()
                         .text_color(rgb(0x9CA3AF))
                         .child("改名 / 改端口 / 填 mpv 路径：编辑 config.json 后重启应用"),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(ghost_button(
+                    "toggle-fullscreen",
+                    if config.mpv_fullscreen {
+                        "关闭投屏全屏"
+                    } else {
+                        "开启投屏全屏"
+                    },
+                    cx.listener(|this, _, _, cx| this.toggle_fullscreen(cx)),
+                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x9CA3AF))
+                        .child("投屏开始时自动全屏；播放中按 Esc 可临时退出"),
                 ),
         )
         .child(

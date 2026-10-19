@@ -34,6 +34,9 @@ pub struct Config {
     /// Path to the mpv executable. `None` = look it up on `PATH`.
     #[serde(default)]
     pub mpv_path: Option<PathBuf>,
+    /// Open the mpv window fullscreen when a cast starts.
+    #[serde(default = "default_true")]
+    pub mpv_fullscreen: bool,
     /// Seconds between SSDP `ssdp:alive` announcements.
     #[serde(default = "default_notify_secs")]
     pub ssdp_notify_secs: u64,
@@ -50,6 +53,10 @@ fn default_max_age() -> u32 {
     1800
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -58,6 +65,7 @@ impl Default for Config {
             port: 5069,
             player: PlayerKind::Mpv,
             mpv_path: None,
+            mpv_fullscreen: true,
             ssdp_notify_secs: default_notify_secs(),
             max_age: default_max_age(),
         }
@@ -150,6 +158,7 @@ mod tests {
         let cfg: Config = serde_json::from_str(r#"{"udn":"u","friendly_name":"n","port":0}"#)
             .expect("legacy config parses");
         assert_eq!(cfg.player, PlayerKind::Mpv);
+        assert!(cfg.mpv_fullscreen);
         assert_eq!(cfg.ssdp_notify_secs, 30);
         assert_eq!(cfg.max_age, 1800);
     }

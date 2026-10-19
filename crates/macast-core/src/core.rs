@@ -97,7 +97,12 @@ pub struct MacastCore {
 impl MacastCore {
     /// Bind the HTTP port, start SSDP, spawn the player and the event bridge.
     pub async fn start(config: Config) -> anyhow::Result<Arc<Self>> {
-        let player = player::build_player(config.player, config.mpv_path.clone()).await;
+        let player = player::build_player(
+            config.player,
+            config.mpv_path.clone(),
+            config.mpv_fullscreen,
+        )
+        .await;
         let events = Arc::new(EventRegistry::new(SERVER_STRING));
         let (snapshot_tx, _) = watch::channel(PlaybackSnapshot {
             friendly_name: config.friendly_name.clone(),

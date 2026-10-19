@@ -59,9 +59,13 @@ pub trait Player: Send + Sync + 'static {
 }
 
 /// Build the configured player backend.
-pub async fn build_player(kind: PlayerKind, mpv_path: Option<PathBuf>) -> Arc<dyn Player> {
+pub async fn build_player(
+    kind: PlayerKind,
+    mpv_path: Option<PathBuf>,
+    fullscreen: bool,
+) -> Arc<dyn Player> {
     match kind {
-        PlayerKind::Mpv => match mpv::MpvPlayer::spawn(mpv_path).await {
+        PlayerKind::Mpv => match mpv::MpvPlayer::spawn(mpv_path, fullscreen).await {
             Ok(p) => Arc::new(p),
             Err(e) => {
                 tracing::error!("failed to start mpv backend ({e}), falling back to null player");

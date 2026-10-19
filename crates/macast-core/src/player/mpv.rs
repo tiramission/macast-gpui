@@ -56,6 +56,39 @@ fn mpv_args(ipc_path: &str) -> Vec<String> {
     ]
 }
 
+/// IPC commands for one cast. Split out so the sequence is unit-testable
+/// without spawning mpv.
+fn media_commands(url: &str, start_secs: f64, title: &str, fullscreen: bool) -> Vec<Vec<Value>> {
+    // Show the player window only once something is actually being cast.
+    // Video opens a window on its own; this also covers audio and images.
+    let mut commands = vec![vec![
+        "set_property".into(),
+        "force-window".into(),
+        "yes".into(),
+    ]];
+    // Applied per cast, so leaving fullscreen with Esc does not disable it for
+    // the next video.
+    if fullscreen {
+        commands.push(vec![
+            "set_property".into(),
+            "fullscreen".into(),
+            true.into(),
+        ]);
+    }
+    commands.push(vec!["loadfile".into(), url.into(), "replace".into()]);
+    if start_secs > 0.0 {
+        commands.push(vec!["seek".into(), start_secs.into(), "absolute".into()]);
+    }
+    if !title.is_empty() {
+        commands.push(vec![
+            "set_property".into(),
+            "force-media-title".into(),
+            title.into(),
+        ]);
+    }
+    commands
+}
+
 /// Parse one line of mpv's JSON IPC output into a [`PlayerEvent`].
 fn parse_ipc_event(line: &str) -> Option<PlayerEvent> {
     let v: Value = serde_json::from_str(line).ok()?;
@@ -117,11 +150,12 @@ pub struct MpvPlayer {
     child: Arc<Mutex<Option<Child>>>,
     _tasks: Vec<JoinHandle<()>>,
     ipc_path: String,
+    fullscreen: bool,
 }
 
 impl MpvPlayer {
     /// Spawn mpv and connect to its IPC socket. Returns once connected.
-    pub async fn spawn(mpv_path: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub async fn spawn(mpv_path: Option<PathBuf>, fullscreen: bool) -> anyhow::Result<Self> {
         let ipc_path = ipc_socket_path();
         let exe = mpv_executable(mpv_path);
 
@@ -207,6 +241,7 @@ impl MpvPlayer {
             child: Arc::new(Mutex::new(Some(child))),
             _tasks: vec![writer_task, reader_task],
             ipc_path,
+            fullscreen,
         };
 
         // Observe the properties we translate into UPnP state.
@@ -237,23 +272,8 @@ impl MpvPlayer {
 #[async_trait]
 impl Player for MpvPlayer {
     async fn set_media_url(&self, url: &str, start_secs: f64, title: &str) {
-        // Show the player window only once something is actually being cast.
-        // Video opens a window on its own; this also covers audio and images.
-        self.cmd(vec![
-            "set_property".into(),
-            "force-window".into(),
-            "yes".into(),
-        ]);
-        self.cmd(vec!["loadfile".into(), url.into(), "replace".into()]);
-        if start_secs > 0.0 {
-            self.cmd(vec!["seek".into(), start_secs.into(), "absolute".into()]);
-        }
-        if !title.is_empty() {
-            self.cmd(vec![
-                "set_property".into(),
-                "force-media-title".into(),
-                title.into(),
-            ]);
+        for command in media_commands(url, start_secs, title, self.fullscreen) {
+            self.cmd(command);
         }
         let _ = self.events.send(PlayerEvent::Playing);
     }
@@ -362,5 +382,29 @@ mod tests {
     fn parses_seek_targets() {
         assert_eq!(seek_target_to_secs("0:01:15"), 75.0);
         assert_eq!(seek_target_to_secs("12.5"), 12.5);
+    }
+
+    #[test]
+    fn fullscreen_is_applied_on_every_cast() {
+        let commands = media_commands("http://host/v.mp4", 0.0, "", true);
+        assert!(commands.iter().any(|command| {
+            command.get(1).and_then(|v| v.as_str()) == Some("fullscreen")
+                && command.get(2).and_then(|v| v.as_bool()) == Some(true)
+        }));
+        // The command must precede loadfile so the window opens fullscreen.
+        let fullscreen_at = commands
+            .iter()
+            .position(|command| command.get(1).and_then(|v| v.as_str()) == Some("fullscreen"))
+            .unwrap();
+        let loadfile_at = commands
+            .iter()
+            .position(|command| command.first().and_then(|v| v.as_str()) == Some("loadfile"))
+            .unwrap();
+        assert!(fullscreen_at < loadfile_at);
+
+        let commands = media_commands("http://host/v.mp4", 0.0, "", false);
+        assert!(!commands
+            .iter()
+            .any(|command| command.get(1).and_then(|v| v.as_str()) == Some("fullscreen")));
     }
 }

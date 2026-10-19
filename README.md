@@ -25,6 +25,7 @@ macast-gpui/
 - **系统托盘（Windows）**：关闭窗口 = 隐藏到托盘；托盘左键/菜单恢复窗口，菜单可退出
 - **应用图标**：exe / 窗口 / 任务栏统一图标（资源 ID 1，gpui 直接加载）
 - **按需显示 mpv 窗口**：启动后不弹空播放器窗口；开始投屏才出现，Stop 后自动关闭
+- **投屏默认全屏**：每次投屏开始时 mpv 自动全屏（`mpv_fullscreen`，设置面板可开关；播放中 Esc 可临时退出）
 - **GPU 渲染 / 快速启动**：gpui 走 Direct3D 11 硬件加速，release 约 0.25 秒显示主窗口
 - **可插拔播放器**：`Player` trait；无 mpv 环境可用 `null` 后端联调协议
 
@@ -55,6 +56,7 @@ cargo run -p macast-app
   "port": 5069,
   "player": "mpv",
   "mpv_path": null,
+  "mpv_fullscreen": true,
   "ssdp_notify_secs": 30,
   "max_age": 1800
 }

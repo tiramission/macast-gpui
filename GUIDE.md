@@ -441,6 +441,7 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | 托盘常驻 | 日志 `tray icon created`；用 Win32 消息模拟左键、关闭、菜单退出 | 关闭后窗口隐藏且进程存活；托盘点击恢复可见；退出触发 `shutting down MacastCore` |
 | 应用图标 | `LoadImageW(exe, 1, IMAGE_ICON)` + `GetClassLongPtr(GCLP_HICON)` | 资源 ID 1 存在（16–256 px），窗口类图标句柄非 0 |
 | mpv 空闲窗口 | 检查启动参数与日志 | `--force-window=no`，投屏时置 yes、Stop 复位（本机未装 mpv，未实机） |
+| 投屏全屏 | 单测检查每次投屏的 mpv 命令序列 | `fullscreen=true` 在 `loadfile` 之前发送；`mpv_fullscreen=false` 可关闭 |
 | GPU 加速 | 启动日志 | `Using GPU: Intel Iris Xe` + `Created device with Direct3D 11.1`（硬件 D3D11；`0x887A002D` 只是 debug layer 缺失） |
 | 启动耗时 | 进程启动到主窗口可见（3 次） | **0.24–0.25s**（优化前 6.2s，见 §8 排查表） |
 | 点击 Seek / 拖拽播放 / 设置面板 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
