@@ -453,6 +453,11 @@ impl Render for RootView {
         let s = self.snapshot.clone();
         let playing = s.transport_state == TransportState::Playing;
         let has_media = !s.uri.is_empty();
+
+        // Exit OS fullscreen when the alhazen video ends and fullscreen is off.
+        if !self.alhazen_fullscreen && self.alhazen_player.is_none() && window.is_fullscreen() {
+            window.toggle_fullscreen();
+        }
         let is_alhazen = runtime_backend == "alhazen" || self.config.player == PlayerKind::Alhazen;
 
         // Alhazen backend: create a VideoPlayer entity for the current cast.
@@ -483,20 +488,32 @@ impl Render for RootView {
                 self.alhazen_player = Some(cx.new(|cx| VideoPlayer::new(source, config, cx)));
                 if let Some(player) = &self.alhazen_player {
                     player.update(cx, |p, inner_cx| p.play(inner_cx));
-                    // Debug: subscribe to alhazen events to trace playback.
-                    cx.subscribe(player, |_, _, event: &alhazen_gpui::PlayerEvent, _| {
-                        match event {
-                            alhazen_gpui::PlayerEvent::StateChanged(state) => {
-                                tracing::info!("alhazen state: {state:?}");
+                    // Auto-exit fullscreen and clear player on playback end.
+                    cx.subscribe(
+                        player,
+                        move |this, _, event: &alhazen_gpui::PlayerEvent, cx| match event {
+                            alhazen_gpui::PlayerEvent::StateChanged(
+                                alhazen_gpui::PlayerState::Ended,
+                            ) => {
+                                this.alhazen_player = None;
+                                this.alhazen_fullscreen = false;
+                                this.stop();
+                                cx.notify();
                             }
                             alhazen_gpui::PlayerEvent::Error(e) => {
                                 tracing::error!("alhazen error: {e}");
+                                this.alhazen_player = None;
+                                this.alhazen_fullscreen = false;
+                                this.stop();
+                                cx.notify();
                             }
-                            _ => {
-                                tracing::debug!("alhazen event: {event:?}");
+                            alhazen_gpui::PlayerEvent::StateChanged(state) => {
+                                tracing::debug!("alhazen state: {state:?}");
                             }
-                        }
-                    }).detach();
+                            _ => {}
+                        },
+                    )
+                    .detach();
                 }
             }
         } else {
