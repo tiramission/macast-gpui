@@ -36,11 +36,12 @@ if (-not (Test-Path $exe)) { throw "missing $exe" }
 
 $version = (Select-String -Path "Cargo.toml" -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
 $stage = Join-Path $root "$OutDir\macast-gpui-$version"
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-New-Item -ItemType Directory -Path $stage | Out-Null
+# Do not delete the staging directory: overwrite in place so the script also
+# works when a policy/tool blocks removals (and avoids touching unrelated files).
+New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
-Copy-Item $exe $stage
-Copy-Item "README.md", "GUIDE.md", "LICENSE" $stage
+Copy-Item $exe $stage -Force
+Copy-Item "README.md", "GUIDE.md", "LICENSE" $stage -Force
 @"
 macast-gpui $version
 ====================
@@ -55,9 +56,17 @@ macast-gpui $version
 
 3. Keep %APPDATA%\macast-gpui\config.json: it holds the device UDN. Deleting
    it makes phones treat this PC as a new device.
+
+4. This build has no console window. Logs go to
+   %APPDATA%\macast-gpui\logs\macast-gpui.log. Closing the window keeps the app
+   in the system tray; right-click the tray icon and choose 退出 to quit.
 "@ | Set-Content -Encoding UTF8 (Join-Path $stage "README-FIRST.txt")
 
 $zip = Join-Path $root "$OutDir\macast-gpui-$version-windows-x64.zip"
-if (Test-Path $zip) { Remove-Item -Force $zip }
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
+if (Test-Path $zip) {
+    # -Update replaces the entries we just rebuilt instead of deleting the zip.
+    Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Update
+} else {
+    Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
+}
 Write-Host "==> $zip"

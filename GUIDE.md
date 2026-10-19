@@ -459,6 +459,8 @@ cargo build --release -p macast-app
 # 产物：target/release/macast-app.exe
 ```
 
+> release 构建带 `windows_subsystem = "windows"`（由 `main.rs` 顶部的 `cfg_attr` 控制）：双击不弹终端，日志写 `%APPDATA%\macast-gpui\logs\macast-gpui.log`。debug 构建仍保留控制台，方便 `cargo run` 看日志。
+
 随包分发清单：
 1. `macast-app.exe`
 2. `mpv.exe`（及依赖 dll）——或引导用户单独安装 mpv 并加 PATH
