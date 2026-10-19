@@ -5,16 +5,19 @@
 //! Events flow the other way through a broadcast channel and are translated
 //! into UPnP state variable changes + GENA notifications.
 
+pub mod builtin;
 pub mod mpv;
 pub mod null;
+pub mod video_host;
 
 use crate::config::PlayerKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use video_host::VideoHost;
 
 /// Events emitted by a player backend towards the DLNA layer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlayerEvent {
     /// Media loaded and (auto-)playing; duration may be unknown (0.0).
     Loaded {
@@ -59,16 +62,30 @@ pub trait Player: Send + Sync + 'static {
 }
 
 /// Build the configured player backend.
+///
+/// `video_host` is provided by the UI process and is required by the built-in
+/// (Media Foundation) backend; without it that backend falls back to null.
 pub async fn build_player(
     kind: PlayerKind,
     mpv_path: Option<PathBuf>,
     fullscreen: bool,
+    video_host: Option<Arc<dyn VideoHost>>,
 ) -> Arc<dyn Player> {
     match kind {
         PlayerKind::Mpv => match mpv::MpvPlayer::spawn(mpv_path, fullscreen).await {
             Ok(p) => Arc::new(p),
             Err(e) => {
                 tracing::error!("failed to start mpv backend ({e}), falling back to null player");
+                Arc::new(null::NullPlayer::new())
+            }
+        },
+        PlayerKind::Builtin => match video_host {
+            Some(host) => Arc::new(builtin::BuiltinPlayer::new(host, fullscreen)),
+            None => {
+                tracing::warn!(
+                    "builtin backend requested but no video host is available, \
+                     falling back to null player"
+                );
                 Arc::new(null::NullPlayer::new())
             }
         },

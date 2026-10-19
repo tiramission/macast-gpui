@@ -17,6 +17,9 @@ pub enum PlayerKind {
     /// External mpv process, driven through its JSON IPC socket.
     #[default]
     Mpv,
+    /// Built-in player: Windows Media Foundation rendering inside the app
+    /// window (Windows only; needs the UI process to provide a video host).
+    Builtin,
     /// No-op player (useful for headless testing of the DLNA stack).
     Null,
 }

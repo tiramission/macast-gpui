@@ -33,7 +33,7 @@ macast-gpui/
 - **按需显示 mpv 窗口**：启动后不弹空播放器窗口；开始投屏才出现，Stop 后自动关闭
 - **投屏默认全屏**：每次投屏开始时 mpv 自动全屏（`mpv_fullscreen`，设置面板可开关；播放中 Esc 可临时退出）
 - **GPU 渲染 / 快速启动**：gpui 走 Direct3D 11 硬件加速，release 约 0.25 秒显示主窗口
-- **可插拔播放器**：`Player` trait；无 mpv 环境可用 `null` 后端联调协议
+- **可插拔播放器**：`Player` trait；mpv / **内置（Media Foundation）** / null 三个后端，无 mpv 环境可用内置或 null
 
 ## 快速开始
 
@@ -60,7 +60,7 @@ cargo run -p macast-app
   "udn": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "friendly_name": "Macast-Gpui(你的电脑名)",
   "port": 5069,
-  "player": "mpv",
+  "player": "mpv",  # "mpv" / "builtin" / "null"
   "mpv_path": null,
   "mpv_fullscreen": true,
   "theme": "auto",

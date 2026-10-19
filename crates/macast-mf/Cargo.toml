@@ -1,0 +1,25 @@
+[package]
+name = "macast-mf"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+macast-core = { path = "../macast-core" }
+tracing = "0.1"
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Variant",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[package.metadata.notes]
+description = "Media Foundation interop for the built-in video backend"

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/macast-core", "crates/macast-app"]
+members = ["crates/macast-core", "crates/macast-app", "crates/macast-mf"]
 
 [workspace.package]
 version = "0.1.0"
@@ -27,3 +27,7 @@ url = "2"
 
 [profile.release]
 opt-level = 2
+
+# Media Foundation interop, kept in a dedicated crate so the huge
+# Win32_Media_MediaFoundation feature never enters macast-app's windows
+# compilation (which crashes rustc on this toolchain).

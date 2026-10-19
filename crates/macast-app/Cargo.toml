@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 macast-core = { path = "../macast-core" }
+macast-mf = { path = "../macast-mf" }
 gpui = "0.2.2"
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -20,8 +21,12 @@ url = { workspace = true }
 tray-icon = "0.26"
 raw-window-handle = "0.6"
 windows-registry = "0.5"
+windows-core = "0.61"
+windows-strings = "0.5"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
