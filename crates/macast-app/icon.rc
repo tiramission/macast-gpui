@@ -1,0 +1,2 @@
+// Resource id 1 is what gpui's Windows backend loads for the window class.
+1 ICON "assets/icon.ico"

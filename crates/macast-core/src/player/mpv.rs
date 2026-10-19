@@ -45,7 +45,10 @@ fn mpv_args(ipc_path: &str) -> Vec<String> {
         format!("--input-ipc-server={ipc_path}"),
         "--idle=yes".into(),
         "--no-terminal".into(),
-        "--force-window=immediate".into(),
+        // No window while idle: mpv is spawned at app start (`--idle=yes`) and
+        // an empty player window on startup is unwanted. `force-window` is
+        // switched on per media below so audio/images still get a window.
+        "--force-window=no".into(),
         "--image-display-duration=inf".into(),
         "--hwdec=auto".into(),
         "--save-position-on-quit=yes".into(),
@@ -234,6 +237,13 @@ impl MpvPlayer {
 #[async_trait]
 impl Player for MpvPlayer {
     async fn set_media_url(&self, url: &str, start_secs: f64, title: &str) {
+        // Show the player window only once something is actually being cast.
+        // Video opens a window on its own; this also covers audio and images.
+        self.cmd(vec![
+            "set_property".into(),
+            "force-window".into(),
+            "yes".into(),
+        ]);
         self.cmd(vec!["loadfile".into(), url.into(), "replace".into()]);
         if start_secs > 0.0 {
             self.cmd(vec!["seek".into(), start_secs.into(), "absolute".into()]);
@@ -259,6 +269,12 @@ impl Player for MpvPlayer {
     }
 
     async fn stop(&self) {
+        // Drop the forced window first so stopping leaves mpv idle and invisible.
+        self.cmd(vec![
+            "set_property".into(),
+            "force-window".into(),
+            "no".into(),
+        ]);
         self.cmd(vec!["stop".into()]);
         let _ = self.events.send(PlayerEvent::Stopped);
     }
@@ -323,4 +339,28 @@ impl Player for MpvPlayer {
 /// Parse a UPnP `H:MM:SS` target into seconds (used by Seek).
 pub fn seek_target_to_secs(target: &str) -> f64 {
     parse_time(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starts_without_an_idle_window() {
+        let args = mpv_args(r"\\.\pipe\macast_test");
+        assert!(
+            args.iter().any(|arg| arg == "--force-window=no"),
+            "mpv must start idle without a window"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.contains("immediate")),
+            "--force-window=immediate would pop an empty player window at startup"
+        );
+    }
+
+    #[test]
+    fn parses_seek_targets() {
+        assert_eq!(seek_target_to_secs("0:01:15"), 75.0);
+        assert_eq!(seek_target_to_secs("12.5"), 12.5);
+    }
 }
