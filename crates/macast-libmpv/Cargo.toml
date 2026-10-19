@@ -1,5 +1,5 @@
 [package]
-name = "macast-mf"
+name = "macast-libmpv"
 version = "0.1.0"
 edition = "2021"
 publish = false

@@ -79,11 +79,21 @@ pub async fn build_player(
                 Arc::new(null::NullPlayer::new())
             }
         },
-        PlayerKind::Builtin => match video_host {
+        PlayerKind::Libmpv => match video_host {
             Some(host) => Arc::new(builtin::BuiltinPlayer::new(host, fullscreen)),
             None => {
                 tracing::warn!(
-                    "builtin backend requested but no video host is available, \
+                    "libmpv backend requested but no video host is available, \
+                     falling back to null player"
+                );
+                Arc::new(null::NullPlayer::new())
+            }
+        },
+        PlayerKind::Alhazen => match video_host {
+            Some(host) => Arc::new(builtin::BuiltinPlayer::new(host, fullscreen)),
+            None => {
+                tracing::warn!(
+                    "alhazen backend requested but no video host is available, \
                      falling back to null player"
                 );
                 Arc::new(null::NullPlayer::new())

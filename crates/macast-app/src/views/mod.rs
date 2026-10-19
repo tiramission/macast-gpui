@@ -426,7 +426,8 @@ impl Render for RootView {
         let fallback_label = if runtime_backend == "null" {
             match self.core.engine.config.player {
                 PlayerKind::Mpv => Some("mpv 回退"),
-                PlayerKind::Builtin => Some("初始化失败"),
+                PlayerKind::Libmpv => Some("初始化失败"),
+                PlayerKind::Alhazen => Some("初始化失败"),
                 PlayerKind::Null => None,
             }
         } else {
@@ -1122,7 +1123,7 @@ fn settings_panel(
             setting_row("启动后端", segmented_player(config.player, cx)),
         ];
         match config.player {
-            PlayerKind::Builtin => rows.push(
+            PlayerKind::Libmpv => rows.push(
                 div()
                     .text_size(px(10.5))
                     .line_height(px(16.0))
@@ -1448,10 +1449,10 @@ fn segmented_player(current: PlayerKind, cx: &mut Context<RootView>) -> Div {
             cx,
         ))
         .child(option(
-            "player-builtin",
+            "player-libmpv",
             "内置",
-            current == PlayerKind::Builtin,
-            PlayerKind::Builtin,
+            current == PlayerKind::Libmpv,
+            PlayerKind::Libmpv,
             cx,
         ))
         .child(option(

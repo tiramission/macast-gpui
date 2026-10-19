@@ -86,15 +86,16 @@ fn main() {
     // Built-in backend: the video host must live on the main thread, so it is
     // created here and handed to the core before the player is built.
     #[cfg(target_os = "windows")]
-    let video_host_impl: Option<Arc<macast_mf::MfVideoHost>> = match macast_mf::MfVideoHost::new() {
-        Ok(host) => Some(Arc::new(host)),
-        Err(e) => {
-            tracing::warn!("video host unavailable: {e}");
-            None
-        }
-    };
+    let video_host_impl: Option<Arc<macast_libmpv::LibmpvVideoHost>> =
+        match macast_libmpv::LibmpvVideoHost::new() {
+            Ok(host) => Some(Arc::new(host)),
+            Err(e) => {
+                tracing::warn!("video host unavailable: {e}");
+                None
+            }
+        };
     #[cfg(not(target_os = "windows"))]
-    let video_host_impl: Option<Arc<macast_mf::MfVideoHost>> = {
+    let video_host_impl: Option<Arc<macast_libmpv::LibmpvVideoHost>> = {
         // Non-Windows builds have no video host module; keep the type for the
         // common call sites below.
         None

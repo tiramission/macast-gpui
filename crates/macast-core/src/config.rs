@@ -17,9 +17,10 @@ pub enum PlayerKind {
     /// External mpv process, driven through its JSON IPC socket.
     #[default]
     Mpv,
-    /// Built-in player: Windows Media Foundation rendering inside the app
-    /// window (Windows only; needs the UI process to provide a video host).
-    Builtin,
+    /// libmpv (in-process mpv library) rendering in a standalone window.
+    Libmpv,
+    /// Pure-Rust media player engine (alhazen-core) — experimental.
+    Alhazen,
     /// No-op player (useful for headless testing of the DLNA stack).
     Null,
 }

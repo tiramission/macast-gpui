@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/macast-core", "crates/macast-app", "crates/macast-mf"]
+members = ["crates/macast-core", "crates/macast-app", "crates/macast-libmpv"]
 
 [workspace.package]
 version = "0.1.0"

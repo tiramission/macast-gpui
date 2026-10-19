@@ -8,7 +8,7 @@ publish.workspace = true
 
 [dependencies]
 macast-core = { path = "../macast-core" }
-macast-mf = { path = "../macast-mf" }
+macast-libmpv = { path = "../macast-libmpv" }
 gpui = "0.2.2"
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -16,6 +16,7 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3"
 arboard = "3"
 url = { workspace = true }
+alhazen-gpui = { version = "0.6", features = ["http", "media-foundation", "audio-output"], default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.26"

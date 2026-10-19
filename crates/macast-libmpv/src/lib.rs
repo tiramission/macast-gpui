@@ -1,4 +1,4 @@
-//! Built-in video backend using **libmpv** (via the `libmpv2` crate).
+//! **libmpv** backend: video playback via the `libmpv2` crate (libmpv).
 //!
 //! libmpv is the library version of mpv — same engine, same codec support.
 //! The `wid` option tells libmpv to render into our video window HWND.
@@ -80,11 +80,11 @@ impl HostShared {
     }
 }
 
-pub struct MfVideoHost {
+pub struct LibmpvVideoHost {
     shared: Arc<HostShared>,
 }
 
-impl MfVideoHost {
+impl LibmpvVideoHost {
     pub fn new() -> windows::core::Result<Self> {
         let shared = Arc::new(HostShared {
             msg_hwnd: AtomicIsize::new(0),
@@ -143,7 +143,7 @@ impl MfVideoHost {
     }
 }
 
-impl VideoHost for MfVideoHost {
+impl VideoHost for LibmpvVideoHost {
     fn post(&self, cmd: VideoCommand) {
         self.shared.post_cmd(cmd);
     }
@@ -554,4 +554,4 @@ fn leaked_wide(s: &str) -> PCWSTR {
     PCWSTR::from_raw(Box::leak(wide.into_boxed_slice()).as_ptr())
 }
 
-use windows::core::{Result as WindowsResult, PCWSTR};
+use windows::core::PCWSTR;
