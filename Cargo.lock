@@ -45,6 +45,8 @@ dependencies = [
 [[package]]
 name = "alhazen-core"
 version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b36b88eaf3b3ff6075cfb7d8796d24bf4c89b8cc53a88dbeaf4b6369b99f255b"
 dependencies = [
  "aes",
  "cbc",

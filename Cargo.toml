@@ -31,9 +31,3 @@ opt-level = 2
 # Media Foundation interop, kept in a dedicated crate so the huge
 # Win32_Media_MediaFoundation feature never enters macast-app's windows
 # compilation (which crashes rustc on this toolchain).
-
-# alhazen-core 0.6.0's MF frame readback copies every pixel in a scalar loop
-# (~100 ms on a 4K frame), which starves the decode thread. The patched copy in
-# third_party/ memcpy's luma rows and deinterleaves chroma 4 bytes at a time.
-[patch.crates-io]
-alhazen-core = { path = "third_party/alhazen-core" }
