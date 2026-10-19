@@ -56,6 +56,10 @@ pub struct PlaybackSnapshot {
     /// Non-loopback IPv4 addresses we are reachable on.
     pub ips: Vec<String>,
     pub friendly_name: String,
+    /// Incremented on every SetAVTransportURI, so the UI can detect a new
+    /// cast even when the uri and state are identical to the previous one
+    /// (tokio's watch only notifies on value changes).
+    pub cast_seq: u64,
 }
 
 impl Default for PlaybackSnapshot {
@@ -74,6 +78,7 @@ impl Default for PlaybackSnapshot {
             port: 0,
             ips: Vec::new(),
             friendly_name: String::new(),
+            cast_seq: 0,
         }
     }
 }

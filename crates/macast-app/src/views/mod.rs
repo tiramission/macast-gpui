@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
 
 // ---- design tokens -------------------------------------------------------
 // Two palettes share the same semantic roles: one accent, status colours only
@@ -174,8 +176,12 @@ pub struct RootView {
     alhazen_player: Option<gpui::Entity<VideoPlayer>>,
     /// Whether the alhazen video is in fullscreen mode.
     alhazen_fullscreen: bool,
-    /// Last cast URI for the alhazen player lifecycle.
-    alhazen_last_uri: Option<String>,
+    /// Esc key state from the previous frame, for edge detection.
+    esc_was_down: bool,
+    /// `cast_seq` of the cast the alhazen player was built for. Bumped by
+    /// the core on every SetAVTransportURI, so re-casting the same uri still
+    /// counts as a new cast.
+    last_cast_seq: u64,
     /// Timestamp of the last titlebar click, for double-click to maximize.
     last_title_click: Option<std::time::Instant>,
     /// Keeps the OS appearance observer alive (auto theme).
@@ -221,7 +227,8 @@ impl RootView {
             volume_bounds: Rc::new(Cell::new(Bounds::default())),
             alhazen_player: None,
             alhazen_fullscreen: false,
-            alhazen_last_uri: None,
+            esc_was_down: false,
+            last_cast_seq: 0,
             last_title_click: None,
             _appearance_sub: None,
         }
@@ -454,31 +461,57 @@ impl Render for RootView {
         let playing = s.transport_state == TransportState::Playing;
         let has_media = !s.uri.is_empty();
 
-        // Exit OS fullscreen when the alhazen video ends and fullscreen is off.
-        if !self.alhazen_fullscreen && self.alhazen_player.is_none() && window.is_fullscreen() {
+        // Leave fullscreen when the flag is cleared (Esc) or playback ended.
+        // Only the alhazen cast flow puts the window into fullscreen, so any
+        // fullscreen window without the flag should exit it.
+        if !self.alhazen_fullscreen && window.is_fullscreen() {
             window.toggle_fullscreen();
+        }
+
+        // Esc leaves the alhazen fullscreen mode - and ONLY that: nothing
+        // here touches the process or the window's lifetime. gpui 0.2.2's
+        // key dispatch needs a focus system this UI does not have (events
+        // are dropped without a focused node), so poll the global key state
+        // instead, with edge detection so a held key fires once. Polling is
+        // active only while fullscreen, where the window covers the screen
+        // and is therefore necessarily the foreground window.
+        if self.alhazen_fullscreen {
+            let down = (unsafe { GetAsyncKeyState(VK_ESCAPE.0 as i32) } as u16 & 0x8000) != 0;
+            if down && !self.esc_was_down {
+                self.alhazen_fullscreen = false;
+            }
+            self.esc_was_down = down;
+        } else {
+            self.esc_was_down = false;
         }
         let is_alhazen = runtime_backend == "alhazen" || self.config.player == PlayerKind::Alhazen;
 
         // Alhazen backend: create a VideoPlayer entity for the current cast.
         // When fullscreen is enabled, make the gpui window fullscreen too.
         if is_alhazen && self.config.mpv_fullscreen {
-            let new_cast = has_media && self.alhazen_last_uri.as_deref() != Some(s.uri.as_str());
+            let new_cast = has_media && s.cast_seq != self.last_cast_seq;
             if new_cast && !window.is_fullscreen() {
                 window.toggle_fullscreen();
                 self.alhazen_fullscreen = true;
             }
         }
         if is_alhazen {
-            if !has_media {
+            // A stopped/ended cast clears the "last cast" marker so that
+            // re-casting the SAME uri counts as a new cast (and re-enters
+            // fullscreen), not just a different uri.
+            let stopped = !has_media
+                || matches!(
+                    s.transport_state,
+                    TransportState::Stopped | TransportState::NoMediaPresent
+                );
+            if stopped {
                 self.alhazen_player = None;
-                self.alhazen_last_uri = None;
                 if window.is_fullscreen() {
                     window.toggle_fullscreen();
                     self.alhazen_fullscreen = false;
                 }
-            } else if self.alhazen_last_uri.as_deref() != Some(s.uri.as_str()) {
-                self.alhazen_last_uri = Some(s.uri.clone());
+            } else if s.cast_seq != self.last_cast_seq {
+                self.last_cast_seq = s.cast_seq;
                 let source = Source::parse(&s.uri)
                     .unwrap_or_else(|_| Source::parse("file:///dev/null").unwrap());
                 let config = alhazen_gpui::PlayerConfig {

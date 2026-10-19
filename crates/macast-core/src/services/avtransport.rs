@@ -180,6 +180,9 @@ async fn set_av_transport_uri(
             s.position = 0.0;
             s.duration = 0.0;
             s.transport_state = TransportState::PausedPlayback;
+            // Bump even for an identical uri: the UI watches this to start a
+            // new cast (and re-enter fullscreen) on every SetAVTransportURI.
+            s.cast_seq = s.cast_seq.wrapping_add(1);
         })
         .await;
 
