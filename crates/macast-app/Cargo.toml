@@ -15,7 +15,7 @@ tracing = { workspace = true }
 tracing-subscriber = "0.3"
 arboard = "3"
 url = { workspace = true }
-alhazen-gpui = { version = "0.6", features = ["http", "media-foundation", "audio-output"], default-features = false }
+alhazen-gpui = { version = "0.6", features = ["http", "media-foundation", "audio-output", "native"] }
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.26"

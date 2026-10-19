@@ -476,10 +476,27 @@ impl Render for RootView {
                 self.alhazen_last_uri = Some(s.uri.clone());
                 let source = Source::parse(&s.uri)
                     .unwrap_or_else(|_| Source::parse("file:///dev/null").unwrap());
-                let config = alhazen_gpui::PlayerConfig::default();
+                let config = alhazen_gpui::PlayerConfig {
+                    autoplay: true,
+                    ..Default::default()
+                };
                 self.alhazen_player = Some(cx.new(|cx| VideoPlayer::new(source, config, cx)));
                 if let Some(player) = &self.alhazen_player {
                     player.update(cx, |p, inner_cx| p.play(inner_cx));
+                    // Debug: subscribe to alhazen events to trace playback.
+                    cx.subscribe(player, |_, _, event: &alhazen_gpui::PlayerEvent, _| {
+                        match event {
+                            alhazen_gpui::PlayerEvent::StateChanged(state) => {
+                                tracing::info!("alhazen state: {state:?}");
+                            }
+                            alhazen_gpui::PlayerEvent::Error(e) => {
+                                tracing::error!("alhazen error: {e}");
+                            }
+                            _ => {
+                                tracing::debug!("alhazen event: {event:?}");
+                            }
+                        }
+                    }).detach();
                 }
             }
         } else {
