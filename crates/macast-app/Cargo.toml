@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 macast-core = { path = "../macast-core" }
-macast-libmpv = { path = "../macast-libmpv" }
 gpui = "0.2.2"
 tokio = { workspace = true }
 anyhow = { workspace = true }

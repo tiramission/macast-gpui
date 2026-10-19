@@ -7,7 +7,6 @@
 
 pub mod builtin;
 pub mod mpv;
-pub mod null;
 pub mod video_host;
 
 use crate::config::PlayerKind;
@@ -75,30 +74,10 @@ pub async fn build_player(
         PlayerKind::Mpv => match mpv::MpvPlayer::spawn(mpv_path, fullscreen).await {
             Ok(p) => Arc::new(p),
             Err(e) => {
-                tracing::error!("failed to start mpv backend ({e}), falling back to null player");
-                Arc::new(null::NullPlayer::new())
+                tracing::error!("failed to start mpv backend ({e})");
+                Arc::new(builtin::BuiltinPlayer::new(video_host, fullscreen))
             }
         },
-        PlayerKind::Libmpv => match video_host {
-            Some(host) => Arc::new(builtin::BuiltinPlayer::new(host, fullscreen)),
-            None => {
-                tracing::warn!(
-                    "libmpv backend requested but no video host is available, \
-                     falling back to null player"
-                );
-                Arc::new(null::NullPlayer::new())
-            }
-        },
-        PlayerKind::Alhazen => match video_host {
-            Some(host) => Arc::new(builtin::BuiltinPlayer::new(host, fullscreen)),
-            None => {
-                tracing::warn!(
-                    "alhazen backend requested but no video host is available, \
-                     falling back to null player"
-                );
-                Arc::new(null::NullPlayer::new())
-            }
-        },
-        PlayerKind::Null => Arc::new(null::NullPlayer::new()),
+        PlayerKind::Alhazen => Arc::new(builtin::BuiltinPlayer::new(video_host, fullscreen)),
     }
 }

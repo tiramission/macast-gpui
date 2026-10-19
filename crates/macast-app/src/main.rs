@@ -83,26 +83,9 @@ fn main() {
         .expect("failed to build tokio runtime");
     let runtime: &'static tokio::runtime::Runtime = Box::leak(Box::new(runtime));
 
-    // Built-in backend: the video host must live on the main thread, so it is
-    // created here and handed to the core before the player is built.
-    #[cfg(target_os = "windows")]
-    let video_host_impl: Option<Arc<macast_libmpv::LibmpvVideoHost>> =
-        match macast_libmpv::LibmpvVideoHost::new() {
-            Ok(host) => Some(Arc::new(host)),
-            Err(e) => {
-                tracing::warn!("video host unavailable: {e}");
-                None
-            }
-        };
-    #[cfg(not(target_os = "windows"))]
-    let video_host_impl: Option<Arc<macast_libmpv::LibmpvVideoHost>> = {
-        // Non-Windows builds have no video host module; keep the type for the
-        // common call sites below.
-        None
-    };
-    let video_host: Option<Arc<dyn VideoHost>> = video_host_impl
-        .clone()
-        .map(|host| host as Arc<dyn VideoHost>);
+    // Alhazen backend: video rendering is handled by the UI layer via
+    // alhazen-gpui's VideoPlayer entity. The core uses a pass-through host.
+    let video_host: Option<Arc<dyn VideoHost>> = None;
 
     let core = match runtime.block_on(MacastCore::start(Config::load(), video_host.clone())) {
         Ok(core) => core,
@@ -131,12 +114,6 @@ fn main() {
         let window = cx
             .open_window(window_options, |window, cx| {
                 let view = cx.new(|cx| RootView::new(core.clone(), cx));
-                #[cfg(target_os = "windows")]
-                if let Some(host) = &video_host_impl {
-                    if let Some(hwnd) = views::window_handle_of(window) {
-                        host.attach_parent(hwnd.0 as isize);
-                    }
-                }
                 view.update(cx, |view, cx| view.watch_appearance(window, cx));
                 view
             })

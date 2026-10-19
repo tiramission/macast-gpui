@@ -17,8 +17,12 @@ pub struct BuiltinPlayer {
 }
 
 impl BuiltinPlayer {
-    pub fn new(host: Arc<dyn VideoHost>, fullscreen: bool) -> Self {
+    pub fn new(host: Option<Arc<dyn VideoHost>>, fullscreen: bool) -> Self {
         let (events, _) = broadcast::channel(256);
+        let host: Arc<dyn VideoHost> = match host {
+            Some(h) => h,
+            None => Arc::new(super::video_host::NullVideoHost),
+        };
         host.set_event_sink({
             let events = events.clone();
             Arc::new(move |event| {

@@ -15,14 +15,10 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum PlayerKind {
     /// External mpv process, driven through its JSON IPC socket.
-    #[default]
     Mpv,
-    /// libmpv (in-process mpv library) rendering in a standalone window.
-    Libmpv,
-    /// Pure-Rust media player engine (alhazen-core) — experimental.
+    /// Pure-Rust media player engine (alhazen-core) — default.
+    #[default]
     Alhazen,
-    /// No-op player (useful for headless testing of the DLNA stack).
-    Null,
 }
 
 /// Window colour theme. `Auto` follows the OS appearance.
@@ -84,7 +80,7 @@ impl Default for Config {
             udn: format!("{}", Uuid::new_v4()),
             friendly_name: default_friendly_name(),
             port: 5069,
-            player: PlayerKind::Mpv,
+            player: PlayerKind::Alhazen,
             mpv_path: None,
             mpv_fullscreen: true,
             theme: Theme::Auto,
@@ -163,7 +159,7 @@ mod tests {
         let cfg = Config {
             friendly_name: "客厅电视".into(),
             port: 5069,
-            player: PlayerKind::Null,
+            player: PlayerKind::Alhazen,
             ..Default::default()
         };
         cfg.save_to(&path).expect("save");
@@ -171,7 +167,7 @@ mod tests {
         let loaded = Config::load_from(&path);
         assert_eq!(loaded.udn, cfg.udn);
         assert_eq!(loaded.friendly_name, "客厅电视");
-        assert_eq!(loaded.player, PlayerKind::Null);
+        assert_eq!(loaded.player, PlayerKind::Alhazen);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -180,7 +176,7 @@ mod tests {
     fn missing_optional_fields_fall_back_to_defaults() {
         let cfg: Config = serde_json::from_str(r#"{"udn":"u","friendly_name":"n","port":0}"#)
             .expect("legacy config parses");
-        assert_eq!(cfg.player, PlayerKind::Mpv);
+        assert_eq!(cfg.player, PlayerKind::Alhazen);
         assert!(cfg.mpv_fullscreen);
         assert_eq!(cfg.theme, Theme::Auto);
         assert_eq!(cfg.ssdp_notify_secs, 30);

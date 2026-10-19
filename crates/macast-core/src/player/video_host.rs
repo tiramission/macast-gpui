@@ -68,3 +68,15 @@ pub trait VideoHost: Send + Sync + 'static {
         false
     }
 }
+
+/// A no-op [`VideoHost`] that accepts commands but does nothing.
+///
+/// Used when the video rendering is handled entirely by the UI layer
+/// (e.g. alhazen-gpui's `VideoPlayer` entity) rather than by a
+/// window-managing host.
+pub struct NullVideoHost;
+
+impl VideoHost for NullVideoHost {
+    fn post(&self, _cmd: VideoCommand) {}
+    fn set_event_sink(&self, _sink: EventSink) {}
+}
