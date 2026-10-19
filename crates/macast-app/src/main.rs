@@ -71,8 +71,37 @@ fn init_logging() {
     }
 }
 
+/// Forwards `alhazen`'s internal `log` records (backend selection, GPU vs
+/// software decoding, …) into our tracing log so they land in the log file.
+struct AlhazenLogBridge;
+
+impl log::Log for AlhazenLogBridge {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.target().starts_with("alhazen")
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let msg = format!("[alhazen] {}", record.args());
+        match record.level() {
+            log::Level::Error => tracing::error!("{msg}"),
+            log::Level::Warn => tracing::warn!("{msg}"),
+            log::Level::Info => tracing::info!("{msg}"),
+            _ => tracing::debug!("{msg}"),
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static ALHAZEN_LOG: AlhazenLogBridge = AlhazenLogBridge;
+
 fn main() {
     init_logging();
+    let _ = log::set_logger(&ALHAZEN_LOG);
+    log::set_max_level(log::LevelFilter::Info);
 
     // The DLNA core is async (tokio); gpui owns the main thread. We create the
     // runtime up front, block on startup, then keep it alive for background

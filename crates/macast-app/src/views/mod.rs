@@ -483,6 +483,16 @@ impl Render for RootView {
                     .unwrap_or_else(|_| Source::parse("file:///dev/null").unwrap());
                 let config = alhazen_gpui::PlayerConfig {
                     autoplay: true,
+                    // GPU (DXVA) decoding for codecs both the platform and the
+                    // native decoders handle; without this the software path
+                    // (or ffmpeg-cli) takes 4K streams and cannot keep up.
+                    prefer_hardware: true,
+                    // Never silently switch to ffmpeg-cli (software) when the
+                    // hardware decoder falls behind - it only looks worse.
+                    auto_fallback: false,
+                    // The MF decoder emits frames in bursts; a deeper queue
+                    // keeps the UI fed between bursts instead of dropping.
+                    frame_queue_len: 16,
                     ..Default::default()
                 };
                 self.alhazen_player = Some(cx.new(|cx| VideoPlayer::new(source, config, cx)));
