@@ -2,6 +2,9 @@
 /target/
 **/*.rs.bk
 
+# Packaging output
+/dist/
+
 # Local runtime data (generated at first launch, contains the device UDN)
 config.json
 

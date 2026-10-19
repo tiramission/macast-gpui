@@ -530,6 +530,11 @@ fn settings_card(
         .as_ref()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "自动（PATH 中的 mpv）".to_string());
+    let autostart_hint = if cfg!(target_os = "windows") {
+        r"Windows：写入 HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+    } else {
+        "当前平台暂不支持开机自启（仅 Windows）"
+    };
 
     div()
         .flex()
@@ -613,9 +618,12 @@ fn settings_card(
                     },
                     cx.listener(|this, _, _, cx| this.toggle_autostart(cx)),
                 ))
-                .child(div().text_xs().text_color(rgb(0x9CA3AF)).child(
-                    "Windows：写入 HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                )),
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x9CA3AF))
+                        .child(autostart_hint),
+                ),
         )
 }
 

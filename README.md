@@ -1,5 +1,7 @@
 # Macast-Gpui
 
+[![CI](https://github.com/tiramission/macast-gpui/actions/workflows/ci.yml/badge.svg)](https://github.com/tiramission/macast-gpui/actions/workflows/ci.yml)
+
 用 **Rust + gpui** 复刻 [Macast](https://github.com/xfangfang/Macast)：一个跨平台的 **DLNA 媒体接收端（投屏接收器）**。手机视频 App 的"投屏"列表里会出现你的电脑，点一下即可把视频/图片/音乐推过来，由 mpv 播放。
 
 ```
@@ -86,6 +88,22 @@ cargo build --release -p macast-app   # 产物 target/release/macast-app.exe
 > ```
 >
 > 先跑 `cargo check -p macast-app -j 2` 验证代码也无妨（只做元数据检查，最稳）。
+
+### 打包（Windows）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1
+# 产物：dist\macast-gpui-0.1.0-windows-x64.zip（exe + 文档 + 首次运行说明）
+```
+
+## 测试
+
+```bash
+cargo test -p macast-core          # 协议/工具函数单元测试
+cargo fmt --all -- --check         # CI 同款格式检查
+```
+
+CI（GitHub Actions，Windows）会在每次推送时跑格式检查、核心测试和应用编译。
 
 ## 架构
 
