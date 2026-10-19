@@ -438,6 +438,7 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 | 核心单元测试 | `cargo test -p macast-core` | 11 passed（时间解析、HTTP 日期、DIDL、SOAP、配置读写） |
 | 应用编译 | `cargo check -p macast-app -j 2` / `cargo build` | 通过 |
 | 启动冒烟 | 运行 `target/debug/macast-app.exe` | 窗口/HTTP/SSDP 正常；无 mpv 时自动回退 null 并打日志 |
+| 托盘常驻 | 日志确认 `tray icon created`；对进程发送 WM_CLOSE | 进程存活，窗口隐藏（MainWindowHandle=0），关闭被拦截 |
 | 点击 Seek / 拖拽播放 / 设置面板 | 需在有图形会话的机器上人工点测 | 代码已编译通过，未在本机截图验证（当前会话桌面不可捕获） |
 
 > 顺带修掉一个隐藏 bug：`http_date_now()` 的星期索引算错（1970-01-01 会输出 `Fri`），已改为 `(days + 4) % 7` 并补了单元测试。
@@ -509,7 +510,7 @@ crates.io 上的 `gpui 0.2.2` 是**裁剪版**，和 Zed 主仓的 gpui 不是�
 
 按投入产出排序：
 
-1. **托盘图标 + 最小化到托盘**：gpui 无托盘 API。Windows 可用 `windows` crate 调 `Shell_NotifyIconW`，或用 `tray-icon` crate（需要窗口 HWND——可通过 `EnumWindows` 按类名找到自己的窗口）。macOS 用 `objc2` 建 `NSStatusBar`。
+1. **托盘图标 + 关闭到托盘**（已实现 Windows）：`crates/macast-app/src/tray.rs` 用 `tray-icon` 建图标（运行时生成 32×32 RGBA，无需图片资源），菜单「显示主窗口 / 退出」。gpui 的 Windows 消息循环是 `GetMessageW + DispatchMessageW`，会顺带把 tray-icon 隐藏窗口的消息派发掉，所以不用自己起事件循环。窗口隐藏/恢复通过 `raw-window-handle` 拿 HWND，再调 `ShowWindow(SW_HIDE/SW_SHOW)`；用 `Window::on_window_should_close` 返回 `false` 拦截关闭。macOS 用 `objc2` 建 `NSStatusBar`。
 2. **设置界面**：友好名、端口、播放器后端、mpv 路径、字幕/倍速，全部落 `config.rs`
 3. **播放器插件化**：把 `Player` trait 的具械做成"渲染器插件"（对应 Macast-plugins 的思路：IINA/PotPlayer/外部命令），用 dlopen 或子进程 + 简单 RPC
 4. **AirPlay 接收**：协议完全不同（mDNS + FairPlay + NTP），工作量大；可评估集成 `rust-airplay` 类项目或 fork Macast 的音频方案

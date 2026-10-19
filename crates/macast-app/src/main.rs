@@ -7,6 +7,9 @@ use std::time::Duration;
 
 mod views;
 
+#[cfg(target_os = "windows")]
+mod tray;
+
 use views::RootView;
 
 fn main() {
@@ -45,9 +48,28 @@ fn main() {
             ..Default::default()
         };
 
-        let _ = cx.open_window(window_options, |_, cx| {
-            cx.new(|cx| RootView::new(core.clone(), cx))
-        });
+        let window = cx
+            .open_window(window_options, |_, cx| {
+                cx.new(|cx| RootView::new(core.clone(), cx))
+            })
+            .expect("failed to open the main window");
+
+        // Windows: keep running in the system tray. Closing the window hides
+        // it instead of quitting; the tray menu can restore it or exit.
+        #[cfg(target_os = "windows")]
+        {
+            let any: AnyWindowHandle = window.into();
+            match tray::start(any, cx) {
+                Ok(()) => {
+                    let _ = any.update(cx, |_, window, cx| {
+                        window.on_window_should_close(cx, |window, _| {
+                            tray::on_close_requested(window)
+                        });
+                    });
+                }
+                Err(e) => tracing::warn!("system tray unavailable, close will quit: {e}"),
+            }
+        }
 
         // Graceful shutdown: send SSDP byebye and kill mpv before exiting.
         // `on_app_quit` in gpui 0.2 expects a callback returning a future; the
@@ -61,7 +83,7 @@ fn main() {
             let core = core_for_quit.clone();
             let quit_handle = quit_handle.clone();
             async move {
-                let _ = quit_handle.block_on(async {
+                quit_handle.block_on(async {
                     let _ = tokio::time::timeout(Duration::from_secs(2), core.shutdown()).await;
                 });
             }

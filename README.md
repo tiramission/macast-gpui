@@ -22,6 +22,7 @@ macast-gpui/
 - **gpui 界面**：播放状态、标题、进度条（点击跳转 / ±10 秒）、播放控制、音量、一键复制投屏链接、网络信息
 - **设置面板**：查看设备名/端口/UDN、切换 mpv/null 后端、一键打开 `config.json`、Windows 开机自启开关
 - **拖拽播放**：把本地视频/音频拖进窗口即可直接播放（自动转 `file://` URI）
+- **系统托盘（Windows）**：关闭窗口 = 隐藏到托盘；托盘左键/菜单恢复窗口，菜单可退出
 - **可插拔播放器**：`Player` trait；无 mpv 环境可用 `null` 后端联调协议
 
 ## 快速开始
@@ -132,7 +133,8 @@ macast-app（gpui）── watch::Receiver<PlaybackSnapshot> ──► RootView 
 - [x] 设置面板（查看配置、切换播放后端、打开 `config.json`；文本编辑仍走配置文件）
 - [x] 拖拽本地媒体文件到窗口直接播放
 - [x] Windows 开机自启（HKCU Run 键，设置面板里开关）
-- [ ] 托盘图标 + 最小化到托盘（gpui 无内置托盘 API，方案见 GUIDE §9）
+- [x] 托盘图标 + 关闭窗口隐藏到托盘（Windows；菜单可恢复/退出）
+- [ ] macOS/Linux 托盘（同一套 `tray-icon` API，需各自把关闭行为接上）
 - [ ] 应用内文本输入（gpui 0.2.2 无 Input 元素 / IME 支持，需自行实现）
 - [ ] 安装包（见 GUIDE §7）
 - [ ] AirPlay / Chromecast 协议（协议完全不同，工作量大）
