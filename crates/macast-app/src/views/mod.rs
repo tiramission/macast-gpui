@@ -449,13 +449,7 @@ impl Render for RootView {
         set_palette(palette);
 
         let runtime_backend = self.core.engine.player.name();
-        let fallback_label: Option<&'static str> =
-            if runtime_backend != "mpv" && runtime_backend != "alhazen" {
-                Some("初始化失败")
-            } else {
-                None
-            };
-        let backend_fallback = fallback_label.is_some();
+
         let s = self.snapshot.clone();
         let playing = s.transport_state == TransportState::Playing;
         let has_media = !s.uri.is_empty();
@@ -550,7 +544,7 @@ impl Render for RootView {
                             self.volume_bounds.clone(),
                             cx,
                         ))
-                        .child(footer(&s, runtime_backend, backend_fallback)),
+                        .child(footer(&s, runtime_backend)),
                 ),
             );
 
@@ -561,7 +555,6 @@ impl Render for RootView {
                 &s.ips,
                 self.autostart,
                 runtime_backend,
-                fallback_label,
                 cx,
             ));
         }
@@ -1103,7 +1096,7 @@ fn transport_dock(
         ))
 }
 
-fn footer(s: &PlaybackSnapshot, runtime_backend: &str, fallback: bool) -> Div {
+fn footer(s: &PlaybackSnapshot, runtime_backend: &str) -> Div {
     let addresses = if s.ips.is_empty() {
         "未找到可用网卡".to_string()
     } else {
@@ -1132,12 +1125,7 @@ fn footer(s: &PlaybackSnapshot, runtime_backend: &str, fallback: bool) -> Div {
                 .items_center()
                 .gap_2()
                 .flex_shrink_0()
-                .when(fallback, |this| this.text_color(rgb(p().warn)))
-                .child(if fallback {
-                    format!("{runtime_backend} 后端 · 回退")
-                } else {
-                    format!("{runtime_backend} 后端")
-                }),
+                .child(format!("{runtime_backend} 后端")),
         )
 }
 
@@ -1162,10 +1150,8 @@ fn settings_panel(
     ips: &[String],
     autostart: bool,
     runtime_backend: &str,
-    fallback_label: Option<&'static str>,
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
-    let fallback = fallback_label.is_some();
     let mpv_path = config
         .mpv_path
         .as_ref()
@@ -1175,26 +1161,7 @@ fn settings_panel(
     // 播放 section: mpv 路径仅对 mpv 后端显示；内置后端显示解码器说明。
     let play_rows: Vec<Div> = {
         let mut rows = vec![
-            setting_row(
-                "当前运行",
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .when(fallback, |this| this.text_color(rgb(p().warn)))
-                    .child(runtime_backend.to_string())
-                    .when(fallback, |this| {
-                        this.child(
-                            div()
-                                .px(px(6.0))
-                                .h(px(18.0))
-                                .rounded_full()
-                                .bg(rgba((p().warn << 8) | 0x24))
-                                .text_size(px(10.0))
-                                .child(fallback_label.unwrap_or("回退")),
-                        )
-                    }),
-            ),
+            setting_row("当前运行", div().child(runtime_backend.to_string())),
             setting_row("启动后端", segmented_player(config.player, cx)),
         ];
         match config.player {
@@ -1234,16 +1201,6 @@ fn settings_panel(
         .flex_col()
         .gap_5()
         .child(section("播放", play_rows))
-        .when(fallback, |this| {
-            this.child(
-                div()
-                    .pt_1()
-                    .text_size(px(10.5))
-                    .line_height(px(16.0))
-                    .text_color(rgb(p().warn))
-                    .child("播放器初始化失败，已回退到 null。mpv：检查 PATH / mpv_path；内置：查看日志。"),
-            )
-        })
         .child(section(
             "外观",
             vec![setting_row("主题", segmented_theme(config.theme, cx))],
