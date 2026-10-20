@@ -33,10 +33,16 @@ out_dir = "../../dist"
 # Windows installer (NSIS). `installer-mode` defaults to per-user, so installing
 # needs no admin rights; the default template already ships desktop + start menu
 # shortcuts and the uninstall entry.
+#
+# `template` swaps in our copy of cargo-packager's .nsi (see nsis/installer.nsi):
+# the stock template always installs per-user software into %LOCALAPPDATA% and
+# remembers the previous install directory forever, which is how a stray
+# %TEMP% path once showed up as the suggested target.
 [package.metadata.packager.nsis]
 installer-icon = "assets/icon.ico"
 languages = ["SimpChinese", "English"]
 display-language-selector = true
+template = "nsis/installer.nsi"
 
 [dependencies]
 macast-core = { path = "../macast-core" }
