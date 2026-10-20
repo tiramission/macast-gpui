@@ -1058,6 +1058,11 @@ fn hero_card(
 
     // While a picture is on screen it owns the whole hero card: no leftover
     // idle artwork/metadata stacked over the video. Idle keeps the old layout.
+    //
+    // The card's own background is the idle gradient, not black: both backends
+    // paint only the picture area and leave the letterbox pixels untouched
+    // (alhazen paints just the fitted rect, libmpv leaves them transparent), so
+    // the bars show the card colour instead of hard black edges.
     let card = div()
         .flex_1()
         .min_h(px(240.0))
@@ -1065,43 +1070,37 @@ fn hero_card(
         .overflow_hidden()
         .rounded_2xl()
         .border_1()
-        .border_color(rgba(p().border));
+        .border_color(rgba(p().border))
+        .bg(linear_gradient(
+            135.0,
+            linear_color_stop(rgb(p().hero_from), 0.0),
+            linear_color_stop(rgb(p().hero_to), 1.0),
+        ));
 
     if let Some(player) = alhazen_player {
         return card
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(0x000000))
             .child(alhazen_gpui::video_view(player).size_full());
     }
     // mpv backend: the picture arrives as a raw BGRA frame from libmpv.
     if let Some(mpv) = mpv_paint {
-        return card
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgb(0x000000))
-            .child(
-                canvas(
-                    move |_, _, _| {},
-                    move |bounds, _, window, _| {
-                        paint_mpv_frame(window, bounds, &mpv);
-                    },
-                )
-                .size_full(),
-            );
+        return card.flex().items_center().justify_center().child(
+            canvas(
+                move |_, _, _| {},
+                move |bounds, _, window, _| {
+                    paint_mpv_frame(window, bounds, &mpv);
+                },
+            )
+            .size_full(),
+        );
     }
 
     card.flex()
         .items_center()
         .gap_6()
         .p_6()
-        .bg(linear_gradient(
-            135.0,
-            linear_color_stop(rgb(p().hero_from), 0.0),
-            linear_color_stop(rgb(p().hero_to), 1.0),
-        ))
         .child(artwork(s, playing))
         .child(info)
 }
