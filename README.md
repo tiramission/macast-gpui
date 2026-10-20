@@ -25,6 +25,7 @@ macast-gpui/
 - **两种窗口内播放后端**（`Player` trait，可插拔；都不弹外部窗口，画面直接画在 Now Playing 卡片里）：
   - **alhazen（默认）**：纯进程内解码（alhazen-core），画面走 gpui `video_view()`；Windows 走 Media Foundation DXVA 硬件解码，**零外部依赖**
   - **mpv**：进程内加载 `libmpv-2.dll`（libmpv + JSON 控制/事件），画面用 mpv 的 SW render API 渲成 BGRA 帧再交给 gpui `paint_image`；**不需要 `mpv.exe`**
+- **图片投屏**：手机相册/图库投照片（DLNA `object.item.imageItem.photo`）也直接显示在窗口内。图片由 UI 层自己下载 + 解码 + 绘制，**不经过任一播放后端**（alhazen / mpv 都不解码图片）；支持 `http(s)://` 与本地 `file://`（拖拽图片文件同理），Stop 后清除画面
 - **gpui 界面（影音控制台）**：自绘标题栏、Now Playing 大卡片、悬浮控制栏、侧滑设置面板、矢量图标（canvas 绘制，无图片资源）
 - **主题**：亮色 / 暗色 / **自动（默认，跟随系统）**，设置面板切换即时生效
 - **设置面板**：显示「当前运行」的后端；切换 alhazen / mpv（重启后生效），可一键打开 `config.json`、开关 Windows 开机自启、开关系统托盘
@@ -170,6 +171,7 @@ macast-app（gpui）── watch::Receiver<PlaybackSnapshot> ──► RootView 
 - [ ] 应用内文本输入（gpui 0.2.2 无 Input 元素 / IME 支持，需自行实现）
 - [ ] 安装包（见 GUIDE §7）
 - [ ] AirPlay / Chromecast 协议（协议完全不同，工作量大）
+- [ ] 图片轮播（`SetNextAVTransportURI` / 幻灯片）与旋转缩放：目前一次显示一张，Stop 即清除
 - [x] **视频嵌入 gpui 窗口**：alhazen 后端（默认）——画面通过 `video_view()` 直接画在 Now Playing 卡片内，不弹外部窗口
 - [x] **mpv 后端也走窗口内渲染**：已由进程内 libmpv + SW render 实现（`libmpv-2.dll` → BGRA 帧 → gpui `paint_image`），不需要 `mpv.exe`
 

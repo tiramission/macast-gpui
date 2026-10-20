@@ -86,6 +86,17 @@ pub fn http_date(secs: i64) -> String {
     )
 }
 
+/// Turn a `file://` URI into a local path (percent-decoding included).
+///
+/// Returns `None` for every other scheme, so callers can fall back to HTTP.
+pub fn uri_to_local_path(uri: &str) -> Option<std::path::PathBuf> {
+    let url = url::Url::parse(uri).ok()?;
+    if url.scheme() != "file" {
+        return None;
+    }
+    url.to_file_path().ok()
+}
+
 /// XML-escape text content.
 pub fn xml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());

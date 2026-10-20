@@ -1,5 +1,6 @@
 //! SOAP 1.1 envelope parsing / building for UPnP control messages.
 
+use crate::state::MediaKind;
 use crate::util::xml_escape;
 use std::collections::HashMap;
 
@@ -97,6 +98,61 @@ pub fn parse_didl_title(metadata: &str) -> Option<String> {
         .and_then(|n| n.text())
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
+}
+
+/// File extensions that mean "still picture" when the metadata says nothing.
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "webp", "tif", "tiff", "ico", "avif",
+];
+
+/// Does DIDL-Lite metadata describe a still picture?
+///
+/// Control points signal this through `<upnp:class>object.item.imageItem…`
+/// or through the mime type in `<res protocolInfo="http-get:*:image/jpeg:…">`.
+fn didl_is_image(metadata: &str) -> bool {
+    if metadata.trim().is_empty() {
+        return false;
+    }
+    let Ok(doc) = roxmltree::Document::parse(metadata) else {
+        return false;
+    };
+    let has_image_class = doc.descendants().any(|n| {
+        n.is_element()
+            && n.tag_name().name() == "class"
+            && n.text()
+                .map(|t| t.trim().starts_with("object.item.image"))
+                .unwrap_or(false)
+    });
+    if has_image_class {
+        return true;
+    }
+    doc.descendants().any(|n| {
+        n.is_element()
+            && n.tag_name().name() == "res"
+            && n.attribute("protocolInfo")
+                .and_then(|p| p.split(':').nth(2))
+                .map(|mime| mime.starts_with("image/"))
+                .unwrap_or(false)
+    })
+}
+
+fn uri_has_image_extension(uri: &str) -> bool {
+    // Drop any query/fragment first so `photo.jpg?w=1` still counts.
+    let path = uri.split(['?', '#']).next().unwrap_or(uri);
+    let ext = match path.rsplit_once('.') {
+        Some((_, ext)) => ext,
+        None => return false,
+    };
+    IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
+/// Best-effort media kind of a cast: DIDL-Lite metadata first, then the URI.
+pub fn guess_media_kind(uri: &str, metadata: &str) -> MediaKind {
+    if didl_is_image(metadata) || uri_has_image_extension(uri) {
+        MediaKind::Image
+    } else {
+        MediaKind::AudioVideo
+    }
 }
 
 /// Build a successful action response envelope.
@@ -207,5 +263,37 @@ mod tests {
         let fault = build_fault(&SoapFault::new(701, "Transition not available"));
         assert!(fault.contains("<errorCode>701</errorCode>"));
         assert!(fault.contains("<errorDescription>Transition not available</errorDescription>"));
+    }
+
+    #[test]
+    fn detects_image_casts() {
+        let photo = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dc="http://purl.org/dc/elements/1.1/"><item id="1"><dc:title>x</dc:title><upnp:class>object.item.imageItem.photo</upnp:class><res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_LRG">http://h/a.jpg</res></item></DIDL-Lite>"#;
+        assert_eq!(guess_media_kind("http://h/a.jpg", photo), MediaKind::Image);
+
+        // No upnp:class, only the res mime type.
+        let res_only = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item><res protocolInfo="http-get:*:image/png:*">http://h/a.bin</res></item></DIDL-Lite>"#;
+        assert_eq!(
+            guess_media_kind("http://h/a.bin", res_only),
+            MediaKind::Image
+        );
+
+        // URI extension fallback (drag & drop, metadata-less casts).
+        assert_eq!(
+            guess_media_kind("file:///C:/a%20b.JPG", ""),
+            MediaKind::Image
+        );
+        assert_eq!(guess_media_kind("http://h/p.png?w=1", ""), MediaKind::Image);
+        assert_eq!(guess_media_kind("http://h/p.webp#x", ""), MediaKind::Image);
+
+        // Everything else stays audio/video.
+        let movie = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item><upnp:class>object.item.videoItem</upnp:class></item></DIDL-Lite>"#;
+        assert_eq!(
+            guess_media_kind("http://h/movie.mp4", movie),
+            MediaKind::AudioVideo
+        );
+        assert_eq!(
+            guess_media_kind("http://1.2.3.4:8080/stream", ""),
+            MediaKind::AudioVideo
+        );
     }
 }

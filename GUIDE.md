@@ -90,10 +90,15 @@ protocol.set_state_*() → GENA NOTIFY 推给订阅了的手机
 │  state.rs ─────► UPnP 状态变量表（RwLock<HashMap>）+ UI 快照通道 │
 │  eventing.rs ──► GENA 订阅注册表 + LastChange NOTIFY 推送        │
 │  player/ ──────► Player trait（对应 Macast 的 Renderer 基类）    │
-│       mpv.rs   ─► spawn mpv + JSON IPC（具名管道/Unix socket）   │
-│       null.rs  ─► 空实现（无 mpv 也能联调协议）                  │
+│       alhazen.rs ─► 默认后端：转发给 UI 的 alhazen-gpui 播放器   │
+│       libmpv.rs  ─► 进程内 libmpv + SW render → BGRA 帧         │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+**图片投屏（`MediaKind`）**：`SetAVTransportURI` 会用 DIDL `upnp:class` / `res@protocolInfo` /
+URI 扩展名判定媒体类型（`state::MediaKind`）。判为 `Image` 时 core **不调用 player**（只 `stop()` 掉上一个），
+`Play/Pause/Seek` 也不转给 player；UI 侧 `MacastCore::fetch_bytes(uri)`（http/file）取字节 → `image` 解码
+（RGBA→BGRA）→ `paint_image` 画进 hero 卡片 / 全屏。切到 A/V 或被 Stop 时 `media_kind` 复位，画面清除。
 
 ### 2.2 选型理由
 
@@ -350,6 +355,8 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 - 画面出现在 gpui 窗口内（alhazen 走 `video_view()`，mpv 走 libmpv 渲出的帧）
 - `GetPositionInfo` 返回的进度在走（手机端进度条动）
 - 手机上的播放/暂停/停止/音量能反过来控制
+
+照片同理：`SetAVTransportURI` 带 `upnp:class = object.item.imageItem.photo`（或 URI 以图片扩展名结尾）时，core 判定为图片、**不把 URL 交给播放后端**，由 UI 层 `MacastCore::fetch_bytes` 下载 + `image` 解码 + `paint_image` 画在窗口内；`Play` 只是把状态置为 PLAYING，`Stop` 清除画面。详见 §2.1 的 `MediaKind` 说明。
 
 alhazen 后端（默认，`config.json` 的 `player.kind = "alhazen"`）是进程内解码 + gpui `video_view()` 内嵌渲染，视频画在 Now Playing 卡片里，不弹外部窗口。Windows 上走 Media Foundation DXVA2 硬件解码（默认适配器，Optimus 笔记本上即核显）。播放配置固定 `prefer_hardware=true` + `auto_fallback=false` + `frame_queue_len=16`：防止硬件解码稍慢就静默切到 ffmpeg-cli 软件解码，深队列吸收解码器突发帧。实测 1080p60 满帧 0 丢帧；4K60 受 alhazen-core 0.6.0 逐像素帧回传 + gpui sprite atlas 每帧整帧上传双重限制约 27fps（后续升级 alhazen 或本地 patch 可解）。
 

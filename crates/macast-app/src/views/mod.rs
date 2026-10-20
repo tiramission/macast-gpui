@@ -13,7 +13,9 @@ use alhazen_gpui::{Source, VideoPlayer};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use macast_core::player::{Player, VideoFrame};
-use macast_core::{Config, MacastCore, PlaybackSnapshot, PlayerKind, Theme, TransportState};
+use macast_core::{
+    Config, MacastCore, MediaKind, PlaybackSnapshot, PlayerKind, Theme, TransportState,
+};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -181,6 +183,11 @@ pub struct RootView {
     esc_was_down: bool,
     /// Last mpv frame image, so the next one can drop it from the atlas.
     mpv_slot: Rc<Cell<Option<Arc<RenderImage>>>>,
+    /// Decoded still picture of the current image cast, drawn by this view
+    /// (neither backend decodes pictures).
+    image: Option<Arc<RenderImage>>,
+    /// `cast_seq` the picture in `image` belongs to (0 = none).
+    image_seq: u64,
     /// `cast_seq` of the cast the alhazen player was built for. Bumped by
     /// the core on every SetAVTransportURI, so re-casting the same uri still
     /// counts as a new cast.
@@ -217,6 +224,8 @@ impl RootView {
             alhazen_fullscreen: false,
             esc_was_down: false,
             mpv_slot: Rc::new(Cell::new(None)),
+            image: None,
+            image_seq: 0,
             last_cast_seq: 0,
             last_title_click: None,
             window_handle: None,
@@ -475,6 +484,51 @@ impl RootView {
         .detach();
         cx.notify();
     }
+
+    /// Download and decode the picture of an image cast, then install it.
+    ///
+    /// The fetch needs the tokio runtime (reqwest) and decoding is CPU work, so
+    /// both run on the core runtime / blocking pool; the pixels come back over a
+    /// oneshot channel and become a `RenderImage` inside `update_window` - the
+    /// re-entrancy-safe path the state watcher uses.
+    fn start_image_load(&self, uri: String, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let handle = self.window_handle;
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<DecodedImage, String>>();
+        core.handle().spawn(async move {
+            let _ = tx.send(load_image(&core, &uri).await);
+        });
+        cx.spawn(async move |view, cx| {
+            let Ok(result) = rx.await else {
+                return;
+            };
+            let Some(handle) = handle else {
+                return;
+            };
+            let _ = cx.update_window(handle, |_, window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    match result {
+                        Ok(decoded) => {
+                            if let Some(old) = this.image.take() {
+                                let _ = window.drop_image(old);
+                            }
+                            this.image = Some(Arc::new(RenderImage::new([image::Frame::new(
+                                image::RgbaImage::from_raw(
+                                    decoded.width,
+                                    decoded.height,
+                                    decoded.bgra,
+                                )
+                                .expect("decoded buffer matches its dimensions"),
+                            )])));
+                        }
+                        Err(e) => tracing::warn!("picture cast failed: {e}"),
+                    }
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
 }
 
 impl Render for RootView {
@@ -524,7 +578,15 @@ impl Render for RootView {
         // Both in-window backends: alhazen draws from its entity, mpv from a
         // frame rendered by libmpv.
         let is_inline = matches!(runtime_backend, "alhazen" | "mpv");
-        let mpv_paint: Option<MpvPaint> = (runtime_backend == "mpv")
+        // A picture cast has nothing for a player to do: this view fetches the
+        // still, decodes it and draws it itself. Stop/Ended goes back to idle.
+        let is_image = has_media
+            && s.media_kind == MediaKind::Image
+            && !matches!(
+                s.transport_state,
+                TransportState::Stopped | TransportState::NoMediaPresent
+            );
+        let mpv_paint: Option<MpvPaint> = (runtime_backend == "mpv" && !is_image)
             .then(|| {
                 let player: Arc<dyn Player> = self.core.engine.player.clone();
                 let frame = player.video_frame()?;
@@ -535,6 +597,23 @@ impl Render for RootView {
                 })
             })
             .flatten();
+
+        // Fetch (or drop) the picture of the current cast. The download and
+        // decode run on the core runtime; `cast_seq` says when to load a new one.
+        if is_image {
+            if s.cast_seq != self.image_seq {
+                self.image_seq = s.cast_seq;
+                if let Some(old) = self.image.take() {
+                    let _ = window.drop_image(old);
+                }
+                self.start_image_load(s.uri.clone(), cx);
+            }
+        } else if self.image_seq != 0 {
+            self.image_seq = 0;
+            if let Some(old) = self.image.take() {
+                let _ = window.drop_image(old);
+            }
+        }
 
         // Alhazen backend: create a VideoPlayer entity for the current cast.
         // When fullscreen is enabled, make the gpui window fullscreen too.
@@ -550,7 +629,13 @@ impl Render for RootView {
                 self.alhazen_fullscreen = true;
             }
         }
-        if is_alhazen {
+        if is_image {
+            // Nothing to decode: tear down any video player, and keep the
+            // "last cast" marker current so the picture does not re-enter
+            // fullscreen on every frame.
+            self.alhazen_player = None;
+            self.last_cast_seq = s.cast_seq;
+        } else if is_alhazen {
             // A stopped/ended cast clears the "last cast" marker so that
             // re-casting the SAME uri counts as a new cast (and re-enters
             // fullscreen), not just a different uri.
@@ -670,6 +755,26 @@ impl Render for RootView {
             }
         }
 
+        // Picture fullscreen: the still covers the window over black.
+        if is_image && self.alhazen_fullscreen {
+            let img = self.image.clone();
+            return div()
+                .id("image-fullscreen")
+                .size_full()
+                .bg(rgb(0x000000))
+                .child(
+                    canvas(
+                        move |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            if let Some(img) = &img {
+                                paint_card_image(window, bounds, img);
+                            }
+                        },
+                    )
+                    .size_full(),
+                );
+        }
+
         let mut root = div()
             .id("app-root")
             .relative()
@@ -702,6 +807,7 @@ impl Render for RootView {
                             has_media,
                             self.alhazen_player.clone(),
                             mpv_paint,
+                            self.image.clone(),
                             self.seek_bounds.clone(),
                             cx,
                         ))
@@ -941,6 +1047,7 @@ fn hero_card(
     has_media: bool,
     alhazen_player: Option<gpui::Entity<VideoPlayer>>,
     mpv_paint: Option<MpvPaint>,
+    image: Option<Arc<RenderImage>>,
     seek_bounds: Rc<Cell<Bounds<Pixels>>>,
     cx: &mut Context<RootView>,
 ) -> Div {
@@ -1077,6 +1184,18 @@ fn hero_card(
             linear_color_stop(rgb(p().hero_to), 1.0),
         ));
 
+    // Picture cast: the decoded still owns the card, bars show the card colour.
+    if let Some(img) = image {
+        return card.flex().items_center().justify_center().child(
+            canvas(
+                move |_, _, _| {},
+                move |bounds, _, window, _| {
+                    paint_card_image(window, bounds, &img);
+                },
+            )
+            .size_full(),
+        );
+    }
     if let Some(player) = alhazen_player {
         return card
             .flex()
@@ -1150,6 +1269,59 @@ fn paint_mpv_frame(window: &mut Window, bounds: Bounds<Pixels>, mpv: &MpvPaint) 
     }
     let _ = window.paint_image(bounds, Corners::default(), img, 0, false);
     window.request_animation_frame();
+}
+
+/// Draws a decoded picture inside `bounds`, preserving its aspect ratio; the
+/// card background shows through where the picture does not reach.
+fn paint_card_image(window: &mut Window, bounds: Bounds<Pixels>, img: &Arc<RenderImage>) {
+    let target = ObjectFit::Contain.get_bounds(bounds, img.size(0));
+    let _ = window.paint_image(target, Corners::default(), img.clone(), 0, false);
+}
+
+/// A decoded picture, in the byte order gpui's sprite atlas expects (BGRA).
+struct DecodedImage {
+    width: u32,
+    height: u32,
+    bgra: Vec<u8>,
+}
+
+/// Longest side we hand to gpui: the sprite atlas caps a texture at 16384px, and
+/// an uncapped 24MP photo would also waste memory and upload time.
+const MAX_IMAGE_SIDE: u32 = 4096;
+
+/// Fetch and decode a picture for an image cast.
+async fn load_image(core: &Arc<MacastCore>, uri: &str) -> Result<DecodedImage, String> {
+    let bytes = core.fetch_bytes(uri).await.map_err(|e| format!("{e:#}"))?;
+    tokio::task::spawn_blocking(move || decode_image(&bytes))
+        .await
+        .map_err(|e| format!("decode task failed: {e}"))?
+}
+
+/// Decode a picture and convert it to the byte order gpui's atlas wants.
+///
+/// gpui's sprite atlas is BGRA on every platform (`B8G8R8A8` / `BGRA8`), so -
+/// exactly like gpui's own image loader - swap R and B before handing the frame
+/// over; otherwise red and blue come out exchanged.
+fn decode_image(bytes: &[u8]) -> Result<DecodedImage, String> {
+    let mut img =
+        image::load_from_memory(bytes).map_err(|e| format!("unsupported picture: {e}"))?;
+    if img.width().max(img.height()) > MAX_IMAGE_SIDE {
+        img = img.resize(
+            MAX_IMAGE_SIDE,
+            MAX_IMAGE_SIDE,
+            image::imageops::FilterType::Triangle,
+        );
+    }
+    let (width, height) = (img.width(), img.height());
+    let mut bgra = img.into_rgba8().into_raw();
+    for pixel in bgra.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+    Ok(DecodedImage {
+        width,
+        height,
+        bgra,
+    })
 }
 
 fn artwork(s: &PlaybackSnapshot, playing: bool) -> Div {

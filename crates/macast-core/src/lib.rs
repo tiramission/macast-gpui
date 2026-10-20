@@ -25,4 +25,4 @@ pub mod util;
 
 pub use config::{Config, PlayerKind, Theme};
 pub use core::MacastCore;
-pub use state::{PlaybackSnapshot, TransportState};
+pub use state::{MediaKind, PlaybackSnapshot, TransportState};

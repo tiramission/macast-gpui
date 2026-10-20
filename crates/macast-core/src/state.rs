@@ -38,6 +38,38 @@ impl TransportState {
     }
 }
 
+/// What kind of media the current cast carries.
+///
+/// A DLNA photo cast (`object.item.imageItem.photo`) has no transport to
+/// drive - there is nothing to decode, seek or pause, only a picture to show.
+/// The core therefore hands images to the UI layer instead of the player
+/// backend, and the AVTransport actions stop touching the player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MediaKind {
+    /// Audio or video, played by the player backend.
+    #[default]
+    AudioVideo,
+    /// A still picture, rendered by the UI layer.
+    Image,
+}
+
+impl MediaKind {
+    /// Value stored in the `CurrentMediaKind` state variable.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MediaKind::AudioVideo => "AV",
+            MediaKind::Image => "IMAGE",
+        }
+    }
+
+    pub fn parse_state(s: &str) -> Self {
+        match s.trim() {
+            "IMAGE" => MediaKind::Image,
+            _ => MediaKind::AudioVideo,
+        }
+    }
+}
+
 /// A cheap, UI-friendly projection of the renderer state.
 #[derive(Debug, Clone)]
 pub struct PlaybackSnapshot {
@@ -46,6 +78,8 @@ pub struct PlaybackSnapshot {
     pub title: String,
     pub uri: String,
     pub metadata: String,
+    /// Whether the current cast is a picture (see [`MediaKind`]).
+    pub media_kind: MediaKind,
     pub position: f64,
     pub duration: f64,
     pub volume: u8,
@@ -70,6 +104,7 @@ impl Default for PlaybackSnapshot {
             title: String::new(),
             uri: String::new(),
             metadata: String::new(),
+            media_kind: MediaKind::AudioVideo,
             position: 0.0,
             duration: 0.0,
             volume: 80,
@@ -135,6 +170,7 @@ impl RendererState {
         vars.insert("SinkProtocolInfo".into(), sink_protocol_info.to_string());
         vars.insert("SourceProtocolInfo".into(), String::new());
         vars.insert("TransportState".into(), "NO_MEDIA_PRESENT".into());
+        vars.insert("CurrentMediaKind".into(), "AV".into());
         vars.insert("CurrentTrackURI".into(), String::new());
         vars.insert("CurrentTrackMetaData".into(), String::new());
         vars.insert("CurrentTrackTitle".into(), String::new());

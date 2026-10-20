@@ -3876,6 +3876,7 @@ dependencies = [
  "socket2",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::core::Engine;
-use crate::soap::{parse_didl_title, SoapCall, SoapFault};
-use crate::state::{position_vars, TransportState};
+use crate::soap::{guess_media_kind, parse_didl_title, SoapCall, SoapFault};
+use crate::state::{position_vars, MediaKind, TransportState};
 use crate::util::{format_time, parse_time};
 
 const NO_MEDIA_DURATION: &str = "0:00:00";
@@ -61,7 +61,10 @@ pub async fn handle(
             "Play,Pause,Stop,Seek,Next,Previous".into(),
         )]),
         "Play" => {
-            engine.player.resume().await;
+            // A picture is "played" simply by being on screen.
+            if engine.current_media_kind().await == MediaKind::AudioVideo {
+                engine.player.resume().await;
+            }
             let mut st = engine.state.write().await;
             let changes = st.set_vars(
                 "AVTransport",
@@ -78,7 +81,9 @@ pub async fn handle(
             Ok(vec![])
         }
         "Pause" => {
-            engine.player.pause().await;
+            if engine.current_media_kind().await == MediaKind::AudioVideo {
+                engine.player.pause().await;
+            }
             let mut st = engine.state.write().await;
             let changes = st.set_vars(
                 "AVTransport",
@@ -115,7 +120,11 @@ pub async fn handle(
             let secs = parse_time(&target);
             // Only relative-time seeking is meaningful for network streams.
             let _ = unit;
-            engine.player.seek(secs).await;
+            // A picture has no timeline to seek in; staying silent is friendlier
+            // than faulting, because some control points probe Seek on photos.
+            if engine.current_media_kind().await == MediaKind::AudioVideo {
+                engine.player.seek(secs).await;
+            }
             let vars = position_vars(secs);
             let mut st = engine.state.write().await;
             let changes = st.set_vars("AVTransport", &vars);
@@ -152,8 +161,21 @@ async fn set_av_transport_uri(
     let title = parse_didl_title(&metadata)
         .or_else(|| uri.rsplit('/').next().map(|s| s.to_string()))
         .unwrap_or_else(|| uri.clone());
+    // A picture is fetched and drawn by the UI layer; only A/V needs the player.
+    let media_kind = guess_media_kind(&uri, &metadata);
 
-    engine.player.set_media_url(&uri, 0.0, &title).await;
+    // Publish the kind *before* touching the player: tearing the previous media
+    // down makes the player emit `Stopped`, and the event bridge must already
+    // know this cast is a picture so that event cannot clobber the new state.
+    {
+        let mut st = engine.state.write().await;
+        st.set_var("AVTransport", "CurrentMediaKind", media_kind.as_str());
+    }
+    if media_kind == MediaKind::Image {
+        engine.player.stop().await;
+    } else {
+        engine.player.set_media_url(&uri, 0.0, &title).await;
+    }
 
     let mut updates: Vec<(&str, String)> = vec![
         ("CurrentTrackURI", uri.clone()),
@@ -177,6 +199,7 @@ async fn set_av_transport_uri(
             s.uri = uri;
             s.metadata = metadata;
             s.title = title;
+            s.media_kind = media_kind;
             s.position = 0.0;
             s.duration = 0.0;
             s.transport_state = TransportState::PausedPlayback;

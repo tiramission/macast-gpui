@@ -11,7 +11,7 @@ use crate::device::{description_xml, sink_protocol_info, SERVER_STRING};
 use crate::eventing::EventRegistry;
 use crate::player::{self, Player, PlayerEvent};
 use crate::ssdp::SsdpServer;
-use crate::state::{PlaybackSnapshot, RendererState, SharedState, TransportState};
+use crate::state::{MediaKind, PlaybackSnapshot, RendererState, SharedState, TransportState};
 use crate::util::{format_time, parse_time};
 
 /// Shared engine state, handed to HTTP handlers and background tasks.
@@ -78,6 +78,36 @@ impl Engine {
 
     pub fn description_xml(&self) -> String {
         description_xml(&self.config.device.udn, &self.config.device.friendly_name)
+    }
+
+    /// Media kind of the current cast, as recorded by `SetAVTransportURI`.
+    pub async fn current_media_kind(&self) -> MediaKind {
+        MediaKind::parse_state(&self.state.read().await.get("CurrentMediaKind"))
+    }
+
+    /// Fetch the bytes behind a media URI.
+    ///
+    /// Player backends read their input themselves; the UI needs this for still
+    /// pictures, which it decodes and draws on its own. Supports `file://` and
+    /// `http(s)://`, times out after 15s and refuses absurdly large payloads.
+    pub async fn fetch_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
+        const MAX_BYTES: u64 = 64 * 1024 * 1024;
+        if let Some(path) = crate::util::uri_to_local_path(uri) {
+            let len = tokio::fs::metadata(&path).await?.len();
+            anyhow::ensure!(len <= MAX_BYTES, "file too large ({len} bytes)");
+            return Ok(tokio::fs::read(path).await?);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+        let response = client.get(uri).send().await?.error_for_status()?;
+        anyhow::ensure!(
+            response.content_length().unwrap_or(0) <= MAX_BYTES,
+            "response too large"
+        );
+        let bytes = response.bytes().await?;
+        anyhow::ensure!(bytes.len() as u64 <= MAX_BYTES, "response too large");
+        Ok(bytes.to_vec())
     }
 
     pub async fn shutdown(&self) {
@@ -272,6 +302,11 @@ impl MacastCore {
         self.engine.state.read().await.get("CurrentTrackURI")
     }
 
+    /// Fetch the bytes behind a media URI (see [`Engine::fetch_bytes`]).
+    pub async fn fetch_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
+        self.engine.fetch_bytes(uri).await
+    }
+
     pub async fn shutdown(&self) {
         tracing::info!("shutting down MacastCore");
         self.engine.shutdown().await;
@@ -287,6 +322,16 @@ async fn bridge_loop(engine: Arc<Engine>) {
     loop {
         match rx.recv().await {
             Ok(event) => {
+                // Tearing the previous media down while a picture cast arrives
+                // makes the player emit `Stopped`/`Ended`. Those must not clobber
+                // the state of the cast that just landed - the AVTransport
+                // handlers set TransportState themselves.
+                if matches!(event, PlayerEvent::Stopped | PlayerEvent::Ended)
+                    && engine.current_media_kind().await == MediaKind::Image
+                {
+                    tracing::debug!("ignoring {event:?} during a picture cast");
+                    continue;
+                }
                 let snap_event = event.clone();
                 let mut changes_avt = Vec::new();
                 let mut changes_rc = Vec::new();
