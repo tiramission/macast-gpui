@@ -1,6 +1,6 @@
 """Smoke-test the Windows tray integration without touching the mouse.
 
-Start the app first (target/debug/macast-app.exe), then run:
+Start the app first (target/debug/macast-gpui.exe), then run:
 
     python scripts/tray_smoke_test.py          # hide + restore checks
     python scripts/tray_smoke_test.py --quit   # also select "退出" from the menu

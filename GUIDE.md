@@ -462,7 +462,7 @@ curl -s -X POST http://127.0.0.1:5069/ConnectionManager/action \
 |---|---|---|
 | 核心单元测试 | `cargo test -p macast-core` | 13 passed（时间解析、HTTP 日期、DIDL、SOAP、配置读写、mpv 空闲无窗口） |
 | 应用编译 | `cargo check -p macast-app -j 2` / `cargo build` | 通过 |
-| 启动冒烟 | 运行 `target/debug/macast-app.exe` | 窗口/HTTP/SSDP 正常；无 mpv 时自动回退 null 并打日志 |
+| 启动冒烟 | 运行 `target/debug/macast-gpui.exe` | 窗口/HTTP/SSDP 正常；无 mpv 时自动回退 null 并打日志 |
 | 托盘常驻 | 日志 `tray icon created`；用 Win32 消息模拟左键、关闭、菜单退出 | 关闭后窗口隐藏且进程存活；托盘点击恢复可见；退出触发 `shutting down MacastCore` |
 | 应用图标 | `LoadImageW(exe, 1, IMAGE_ICON)` + `GetClassLongPtr(GCLP_HICON)` | 资源 ID 1 存在（16–256 px），窗口类图标句柄非 0 |
 | mpv 空闲窗口 | 实机：启动后枚举 mpv 窗口；Play 本地 30s 测试视频；Stop | 空闲时 2 个隐藏窗口、0 个可见；Play 后 1 个窗口 **0,0,1707,960 全屏**；Stop 后 0 可见 |
@@ -493,13 +493,33 @@ http.request.method == "NOTIFY"   # GENA 事件推送
 
 ```bash
 cargo build --release -p macast-app
-# 产物：target/release/macast-app.exe
+# 产物：target/release/macast-gpui.exe
 ```
+
+### 7.1 安装包（cargo-packager）
+
+用 [crabnebula-dev/cargo-packager](https://github.com/crabnebula-dev/cargo-packager) 打 Windows 安装包：
+
+```powershell
+cargo install cargo-packager --locked          # 一次性安装 CLI（≥0.11）
+powershell -ExecutionPolicy Bypass -File scripts\installer.ps1
+# 产物：dist\macast-gpui_0.1.0_x64-setup.exe
+```
+
+- 配置在 `crates/macast-app/Cargo.toml` 的 `[package.metadata.packager]`（`product_name` / `identifier` /
+  `icons` / `out_dir`）与 `[package.metadata.packager.nsis]`（`installer-icon`、`languages`、
+  `display-language-selector`）。**注意**：顶层 `name` 必须等于 Cargo 包名（或干脆不写），
+  写了别的值会让 cargo-packager 认为"没有可打包的配置"。
+- 默认 `installer-mode = currentUser`：装到 `%LOCALAPPDATA%\Macast-Gpui`，**不弹 UAC**；模板自带桌面 +
+  开始菜单快捷方式与卸载项，`license_file` 会把 LICENSE 一并装进目录。
+- NSIS 由 cargo-packager 首次运行时自动下载（缓存在 `%LOCALAPPDATA%\.cargo-packager\NSIS`），
+  无需单独安装；`-Msi`（WiX）才需要 WiX Toolset。
+- 已验证：解包载荷含 `macast-gpui.exe` + `uninstall.exe` + LICENSE，图标与中英双语选择正常。
 
 > release 构建带 `windows_subsystem = "windows"`（由 `main.rs` 顶部的 `cfg_attr` 控制）：双击不弹终端，日志写 `%APPDATA%\macast-gpui\logs\macast-gpui.log`。debug 构建仍保留控制台，方便 `cargo run` 看日志。
 
 随包分发清单：
-1. `macast-app.exe`
+1. `macast-gpui.exe`
 2. （可选）`libmpv-2.dll` —— 仅 mpv 后端需要；放 exe 同目录或 `PATH`，或用 `player.libmpv_path` 指定。只用 alhazen 时可完全不打包（**推荐**，DLL 约 121 MB）
 3. 首次运行会写 `%APPDATA%\macast-gpui\config.json`（UDN 在这里，**别删**，删了手机会当成新设备）
 

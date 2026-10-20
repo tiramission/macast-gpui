@@ -6,6 +6,38 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# The crate stays `macast-app`, but the shipped binary is named after the
+# product, so the exe, the installer and the zip all read `macast-gpui`.
+# (cargo-packager derives the installer file name from the main binary, which
+# is how `dist\macast-gpui_<version>_x64-setup.exe` gets its name.)
+[[bin]]
+name = "macast-gpui"
+path = "src/main.rs"
+
+# Installer packaging, consumed by crabnebula-dev/cargo-packager (v0.11):
+#
+#   cargo build --release -p macast-app -j 2    # build the release binary ...
+#   cargo packager -p macast-app -f nsis -r     # ... then package it
+#
+# NSIS ships with cargo-packager, so no extra tooling is needed (unlike the
+# WiX/MSI format, which needs the WiX Toolset installed).
+[package.metadata.packager]
+product_name = "Macast-Gpui"
+identifier = "com.tiramission.macastgpui"
+publisher = "tiramission"
+description = "DLNA/UPnP MediaRenderer (cast receiver) built with Rust + gpui."
+license_file = "../../LICENSE"
+icons = ["assets/icon.ico"]
+out_dir = "../../dist"
+
+# Windows installer (NSIS). `installer-mode` defaults to per-user, so installing
+# needs no admin rights; the default template already ships desktop + start menu
+# shortcuts and the uninstall entry.
+[package.metadata.packager.nsis]
+installer-icon = "assets/icon.ico"
+languages = ["SimpChinese", "English"]
+display-language-selector = true
+
 [dependencies]
 macast-core = { path = "../macast-core" }
 log = "0.4"
@@ -32,3 +64,4 @@ windows = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+

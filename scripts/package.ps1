@@ -31,7 +31,7 @@ Write-Host "==> cargo build --release -p macast-app -j 2"
 cargo build --release -p macast-app -j 2
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
-$exe = Join-Path $root "target\release\macast-app.exe"
+$exe = Join-Path $root "target\release\macast-gpui.exe"
 if (-not (Test-Path $exe)) { throw "missing $exe" }
 
 $version = (Select-String -Path "Cargo.toml" -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
@@ -46,11 +46,11 @@ Copy-Item "README.md", "GUIDE.md", "LICENSE" $stage -Force
 macast-gpui $version
 ====================
 
-1. Install mpv and make sure mpv.exe is on PATH (or set mpv_path in
-   %APPDATA%\macast-gpui\config.json).
-   Without mpv the app still runs, using the "null" player for protocol tests.
+1. No external player is needed: the default alhazen backend decodes in-process.
+   The optional mpv backend wants libmpv-2.dll next to this exe or on PATH (or
+   player.libmpv_path in %APPDATA%\macast-gpui\config.json).
 
-2. Run macast-app.exe. On first launch Windows Firewall asks for network
+2. Run macast-gpui.exe. On first launch Windows Firewall asks for network
    access -- allow it on private networks, otherwise phones cannot discover
    this device.
 
@@ -58,8 +58,9 @@ macast-gpui $version
    it makes phones treat this PC as a new device.
 
 4. This build has no console window. Logs go to
-   %APPDATA%\macast-gpui\logs\macast-gpui.log. Closing the window keeps the app
-   in the system tray; right-click the tray icon and choose 退出 to quit.
+   %APPDATA%\macast-gpui\logs\macast-gpui.log. Closing the window hides the app
+   in the system tray (ui.tray_enabled = false makes it quit instead);
+   right-click the tray icon and choose 退出 to quit.
 "@ | Set-Content -Encoding UTF8 (Join-Path $stage "README-FIRST.txt")
 
 $zip = Join-Path $root "$OutDir\macast-gpui-$version-windows-x64.zip"

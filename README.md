@@ -102,7 +102,7 @@ curl -i -X POST http://127.0.0.1:5069/AVTransport/action \
 ## 构建
 
 ```bash
-cargo build --release -p macast-app   # 产物 target/release/macast-app.exe
+cargo build --release -p macast-app   # 产物 target/release/macast-gpui.exe
 ```
 
 > **Windows 上编译 gpui 如果遇到 rustc 崩溃**（`STATUS_STACK_BUFFER_OVERRUN`，exit code `0xc0000409`）：
@@ -128,6 +128,15 @@ cargo build --release -p macast-app   # 产物 target/release/macast-app.exe
 powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 # 产物：dist\macast-gpui-0.1.0-windows-x64.zip（exe + 文档 + 首次运行说明）
 ```
+
+免安装的 zip 之外，还可以用 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) 打出 **NSIS 安装包**（含桌面/开始菜单快捷方式、卸载项、双语界面）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\installer.ps1
+# 产物：dist\macast-gpui_0.1.0_x64-setup.exe（默认单用户安装，不需要管理员权限）
+```
+
+配置写在 `crates/macast-app/Cargo.toml` 的 `[package.metadata.packager]`（`-Msi` 可换成 WiX/MSI，但需要自行安装 WiX Toolset）；`cargo-packager` CLI 需先 `cargo install cargo-packager --locked`。CI 里另有一个 [Installer 工作流](.github/workflows/installer.yml)：打 tag（`v*`）或在 Actions 里手动触发时构建安装包，tag 会顺带把安装包挂到 Release 上。
 
 ## 测试
 

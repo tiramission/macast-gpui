@@ -1,0 +1,50 @@
+name: Installer
+
+# Build the Windows installer with crabnebula-dev/cargo-packager.
+#
+# Deliberately separate from ci.yml: this one compiles the release profile (much
+# slower than `cargo check`), so it only runs on a tag or when started by hand
+# from the Actions tab.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      # Pinned: the config in crates/macast-app/Cargo.toml targets the v0.11
+      # schema, which is the version verified locally. NSIS itself is fetched
+      # by cargo-packager on first use, so nothing else is needed here.
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked --version 0.11.8
+
+      # scripts/installer.ps1 builds the release binary, points GPUI_FXC_PATH at
+      # the SDK's fxc.exe, and runs `cargo packager -p macast-app -f nsis -r`.
+      - name: Build installer
+        run: powershell -ExecutionPolicy Bypass -File scripts/installer.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macast-gpui-windows-installer
+          path: dist/*-setup.exe
+
+      - name: Attach the installer to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*-setup.exe
