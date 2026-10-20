@@ -767,7 +767,7 @@ impl Render for RootView {
                         move |_, _, _| {},
                         move |bounds, _, window, _| {
                             if let Some(img) = &img {
-                                paint_card_image(window, bounds, img);
+                                paint_card_image(window, bounds, img, true);
                             }
                         },
                     )
@@ -805,9 +805,11 @@ impl Render for RootView {
                             &s,
                             playing,
                             has_media,
-                            self.alhazen_player.clone(),
-                            mpv_paint,
-                            self.image.clone(),
+                            HeroPicture {
+                                alhazen: self.alhazen_player.clone(),
+                                mpv: mpv_paint,
+                                image: self.image.clone(),
+                            },
                             self.seek_bounds.clone(),
                             cx,
                         ))
@@ -1041,16 +1043,28 @@ fn brand_mark() -> Div {
         .child(glyph_icon(Glyph::Play, 13.0, rgb(p().on_accent)))
 }
 
+/// The three ways a picture can reach the hero card: an alhazen `VideoPlayer`
+/// entity, a libmpv frame, or a still decoded by this view. At most one is
+/// ever `Some` - the backend and the media kind decide which.
+struct HeroPicture {
+    alhazen: Option<gpui::Entity<VideoPlayer>>,
+    mpv: Option<MpvPaint>,
+    image: Option<Arc<RenderImage>>,
+}
+
 fn hero_card(
     s: &PlaybackSnapshot,
     playing: bool,
     has_media: bool,
-    alhazen_player: Option<gpui::Entity<VideoPlayer>>,
-    mpv_paint: Option<MpvPaint>,
-    image: Option<Arc<RenderImage>>,
+    picture: HeroPicture,
     seek_bounds: Rc<Cell<Bounds<Pixels>>>,
     cx: &mut Context<RootView>,
 ) -> Div {
+    let HeroPicture {
+        alhazen: alhazen_player,
+        mpv: mpv_paint,
+        image,
+    } = picture;
     let frac = if s.duration > 0.0 {
         (s.position / s.duration).clamp(0.0, 1.0) as f32
     } else {
@@ -1190,7 +1204,10 @@ fn hero_card(
             canvas(
                 move |_, _, _| {},
                 move |bounds, _, window, _| {
-                    paint_card_image(window, bounds, &img);
+                    // A window left fullscreen while the flag is already cleared
+                    // still has to be noticed, so keep the frames coming then.
+                    let keep_repainting = window.is_fullscreen();
+                    paint_card_image(window, bounds, &img, keep_repainting);
                 },
             )
             .size_full(),
@@ -1273,9 +1290,21 @@ fn paint_mpv_frame(window: &mut Window, bounds: Bounds<Pixels>, mpv: &MpvPaint) 
 
 /// Draws a decoded picture inside `bounds`, preserving its aspect ratio; the
 /// card background shows through where the picture does not reach.
-fn paint_card_image(window: &mut Window, bounds: Bounds<Pixels>, img: &Arc<RenderImage>) {
+///
+/// `keep_repainting` matters because Esc-to-windowed is polled from `render`:
+/// a still never changes, so unless we ask for another frame the repaint loop
+/// stops - and a window that is still fullscreen would then never be noticed.
+fn paint_card_image(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    img: &Arc<RenderImage>,
+    keep_repainting: bool,
+) {
     let target = ObjectFit::Contain.get_bounds(bounds, img.size(0));
     let _ = window.paint_image(target, Corners::default(), img.clone(), 0, false);
+    if keep_repainting {
+        window.request_animation_frame();
+    }
 }
 
 /// A decoded picture, in the byte order gpui's sprite atlas expects (BGRA).
@@ -1314,7 +1343,7 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedImage, String> {
     }
     let (width, height) = (img.width(), img.height());
     let mut bgra = img.into_rgba8().into_raw();
-    for pixel in bgra.chunks_exact_mut(4) {
+    for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     Ok(DecodedImage {
