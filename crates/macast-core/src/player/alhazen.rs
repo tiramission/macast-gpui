@@ -1,9 +1,10 @@
-//! Built-in backend: forwards commands to the UI-side video host, which plays
-//! media through Windows Media Foundation (mfplay).
+//! alhazen backend (the default): forwards commands to a UI-side [`VideoHost`]
+//! and mirrors them back as [`PlayerEvent`]s. The actual decoding and in-window
+//! rendering are done by alhazen-gpui's `VideoPlayer` entity in the UI layer.
 //!
 //! This module is deliberately free of Win32 code so the core stays UI- and
-//! platform-agnostic — without a [`VideoHost`] the backend simply cannot be
-//! constructed and `build_player` falls back to the null player.
+//! platform-agnostic; without a host it uses [`NullVideoHost`](super::video_host::NullVideoHost),
+//! which accepts commands and drops them.
 
 use super::video_host::{VideoCommand, VideoHost};
 use super::{Player, PlayerEvent};
@@ -111,26 +112,7 @@ impl Player for AlhazenPlayer {
 
 // ---- pure helpers (unit-tested) ------------------------------------------
 
-/// Seconds → 100-nanosecond units (Media Foundation's time base), clamped to a
-/// valid non-negative range.
-pub fn secs_to_100ns(secs: f64) -> i64 {
-    if !(secs.is_finite() && secs > 0.0) {
-        return 0;
-    }
-    let scaled = secs * 10_000_000.0;
-    if scaled >= i64::MAX as f64 {
-        i64::MAX
-    } else {
-        scaled as i64
-    }
-}
-
-/// 100-nanosecond units → seconds.
-pub fn ns100_to_secs(v: i64) -> f64 {
-    (v.max(0) as f64) / 10_000_000.0
-}
-
-/// mfplay accepts rates in [1/16, 16].
+/// Playback rates are clamped to a sane range (0.0625× – 16×).
 pub fn clamp_rate(speed: f64) -> f64 {
     if !speed.is_finite() {
         return 1.0;
@@ -138,112 +120,9 @@ pub fn clamp_rate(speed: f64) -> f64 {
     speed.clamp(0.0625, 16.0)
 }
 
-/// The subset of `MFP_EVENT_TYPE` values the backend reacts to, decoupled from
-/// the windows crate so the mapping is testable without COM types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MfpEventKind {
-    Play,
-    Pause,
-    Stop,
-    PositionSet,
-    RateSet,
-    MediaItemSet,
-    Error,
-    PlaybackEnded,
-}
-
-/// Payload extracted from an mfplay event, decoupled from the windows crate.
-#[derive(Debug, Clone, Default)]
-pub struct MfpEventDetail {
-    pub position_secs: f64,
-    pub rate: f32,
-    pub duration_secs: f64,
-    pub has_video: bool,
-    pub message: String,
-}
-
-/// What to do with a mapped mfplay event: the [`PlayerEvent`]s to emit and
-/// whether the video surface should be shown/hidden.
-#[derive(Debug, Clone, Default)]
-pub struct MfpEventAction {
-    pub events: Vec<PlayerEvent>,
-    pub show_surface: Option<bool>,
-}
-
-pub fn map_mfp_event(kind: MfpEventKind, detail: &MfpEventDetail) -> MfpEventAction {
-    let mut action = MfpEventAction::default();
-    match kind {
-        MfpEventKind::Play => {
-            action.events.push(PlayerEvent::Playing);
-            action.show_surface = Some(true);
-        }
-        MfpEventKind::Pause => {
-            action.events.push(PlayerEvent::Paused(true));
-        }
-        MfpEventKind::Stop => {
-            action.events.push(PlayerEvent::Stopped);
-            action.show_surface = Some(false);
-        }
-        MfpEventKind::PositionSet => {
-            action
-                .events
-                .push(PlayerEvent::Position(detail.position_secs));
-        }
-        MfpEventKind::RateSet => {
-            action
-                .events
-                .push(PlayerEvent::Speed(f64::from(detail.rate)));
-        }
-        MfpEventKind::MediaItemSet => {
-            action.events.push(PlayerEvent::Loaded {
-                duration: detail.duration_secs,
-            });
-            action
-                .events
-                .push(PlayerEvent::Duration(detail.duration_secs));
-            action.show_surface = Some(detail.has_video);
-        }
-        MfpEventKind::Error => {
-            action
-                .events
-                .push(PlayerEvent::Error(detail.message.clone()));
-            action.show_surface = Some(false);
-        }
-        MfpEventKind::PlaybackEnded => {
-            action.events.push(PlayerEvent::Ended);
-            action.show_surface = Some(false);
-        }
-    }
-    action
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn converts_seconds_to_100ns() {
-        assert_eq!(secs_to_100ns(0.0), 0);
-        assert_eq!(secs_to_100ns(-1.0), 0);
-        assert_eq!(secs_to_100ns(f64::NAN), 0);
-        assert_eq!(secs_to_100ns(1.0), 10_000_000);
-        assert_eq!(secs_to_100ns(0.5), 5_000_000);
-        assert_eq!(secs_to_100ns(f64::MAX), i64::MAX);
-    }
-
-    #[test]
-    fn converts_100ns_to_seconds() {
-        assert_eq!(ns100_to_secs(0), 0.0);
-        assert_eq!(ns100_to_secs(-5), 0.0);
-        assert_eq!(ns100_to_secs(10_000_000), 1.0);
-    }
-
-    #[test]
-    fn round_trips_time() {
-        for secs in [0.001, 1.0, 12.5, 3600.0] {
-            assert!((ns100_to_secs(secs_to_100ns(secs)) - secs).abs() < 1e-7);
-        }
-    }
 
     #[test]
     fn clamps_rate() {
@@ -251,70 +130,5 @@ mod tests {
         assert_eq!(clamp_rate(0.001), 0.0625);
         assert_eq!(clamp_rate(100.0), 16.0);
         assert_eq!(clamp_rate(f64::NAN), 1.0);
-    }
-
-    #[test]
-    fn maps_play_to_playing_and_show() {
-        let action = map_mfp_event(MfpEventKind::Play, &MfpEventDetail::default());
-        assert_eq!(action.events, vec![PlayerEvent::Playing]);
-        assert_eq!(action.show_surface, Some(true));
-    }
-
-    #[test]
-    fn maps_media_item_set_with_duration_and_visibility() {
-        let detail = MfpEventDetail {
-            duration_secs: 30.0,
-            has_video: true,
-            ..Default::default()
-        };
-        let action = map_mfp_event(MfpEventKind::MediaItemSet, &detail);
-        assert_eq!(
-            action.events,
-            vec![
-                PlayerEvent::Loaded { duration: 30.0 },
-                PlayerEvent::Duration(30.0)
-            ]
-        );
-        assert_eq!(action.show_surface, Some(true));
-
-        let detail = MfpEventDetail {
-            duration_secs: 180.0,
-            has_video: false, // audio-only cast keeps the artwork visible
-            ..Default::default()
-        };
-        let action = map_mfp_event(MfpEventKind::MediaItemSet, &detail);
-        assert_eq!(action.show_surface, Some(false));
-    }
-
-    #[test]
-    fn maps_stop_ended_error_to_hidden() {
-        for kind in [MfpEventKind::Stop, MfpEventKind::PlaybackEnded] {
-            let action = map_mfp_event(kind, &MfpEventDetail::default());
-            assert_eq!(action.show_surface, Some(false));
-        }
-        let detail = MfpEventDetail {
-            message: "boom".into(),
-            ..Default::default()
-        };
-        let action = map_mfp_event(MfpEventKind::Error, &detail);
-        assert_eq!(action.events, vec![PlayerEvent::Error("boom".into())]);
-        assert_eq!(action.show_surface, Some(false));
-    }
-
-    #[test]
-    fn maps_position_and_rate() {
-        let detail = MfpEventDetail {
-            position_secs: 12.0,
-            ..Default::default()
-        };
-        let action = map_mfp_event(MfpEventKind::PositionSet, &detail);
-        assert_eq!(action.events, vec![PlayerEvent::Position(12.0)]);
-
-        let detail = MfpEventDetail {
-            rate: 1.5,
-            ..Default::default()
-        };
-        let action = map_mfp_event(MfpEventKind::RateSet, &detail);
-        assert_eq!(action.events, vec![PlayerEvent::Speed(1.5)]);
     }
 }

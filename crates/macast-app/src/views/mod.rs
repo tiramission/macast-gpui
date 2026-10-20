@@ -236,8 +236,7 @@ impl RootView {
     /// and simply skips a beat.
     pub fn init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.window_handle = Some(window.window_handle());
-        self._appearance_sub =
-            Some(cx.observe_window_appearance(window, |_, _, cx| cx.notify()));
+        self._appearance_sub = Some(cx.observe_window_appearance(window, |_, _, cx| cx.notify()));
 
         let handle = self.window_handle;
         let mut rx = self.core.subscribe();
@@ -1094,8 +1093,7 @@ fn hero_card(
             );
     }
 
-    card
-        .flex()
+    card.flex()
         .items_center()
         .gap_6()
         .p_6()

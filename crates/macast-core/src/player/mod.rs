@@ -81,16 +81,16 @@ pub trait Player: Send + Sync + 'static {
 
 /// Build the configured player backend.
 ///
-/// `video_host` is provided by the UI process and is required by the built-in
-/// (Media Foundation) backend; without it that backend falls back to null.
+/// `video_host` is optional: the alhazen backend forwards commands to it, and
+/// when it is `None` a [`NullVideoHost`](video_host::NullVideoHost) drops them
+/// (in this app the UI layer drives alhazen-gpui's `VideoPlayer` directly).
 pub async fn build_player(
     config: &PlayerConfig,
     video_host: Option<Arc<dyn VideoHost>>,
 ) -> Arc<dyn Player> {
     match config.kind {
-        // `Embedded` (libmpv in the app window) is not wired up yet: Auto and
-        // External both drive an external mpv process for now. See
-        // docs/plan-inwindow-mpv.md.
+        // mpv runs in-process via libmpv (`libmpv-2.dll`); if the DLL cannot be
+        // loaded, fall back to alhazen.
         PlayerKind::Mpv => {
             match libmpv::LibmpvPlayer::new(config.libmpv_path.clone(), config.fullscreen_on_cast) {
                 Ok(p) => Arc::new(p),
