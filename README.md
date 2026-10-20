@@ -138,6 +138,16 @@ powershell -ExecutionPolicy Bypass -File scripts\installer.ps1
 
 配置写在 `crates/macast-app/Cargo.toml` 的 `[package.metadata.packager]`（`-Msi` 可换成 WiX/MSI，但需要自行安装 WiX Toolset）；`cargo-packager` CLI 需先 `cargo install cargo-packager --locked`。CI 里另有一个 [Installer 工作流](.github/workflows/installer.yml)：打 tag（`v*`）或在 Actions 里手动触发时构建安装包，tag 会顺带把安装包挂到 Release 上。
 
+单用户安装默认装到 `%LOCALAPPDATA%\Programs\Macast-Gpui`（`crates/macast-app/nsis/installer.nsi` 是仓库里定制的 NSIS 模板，见该文件头部注释）。
+
+### 应用内更新
+
+设置面板里的「更新」一节可以检查、下载并安装新版本（基于 [cargo-packager-updater](https://github.com/crabnebula-dev/cargo-packager/tree/main/crates/updater)）：
+
+- 启动时静默检查一次（可在设置里关掉）；发现新版本会提示，点「下载并安装」才开始下载，下载完成后先做 **minisign 验签**，通过才交给 NSIS 安装包接管（`/P /R`：进度条 + 安装完自动重启），应用自身先退出（并像正常退出那样发 SSDP byebye）。
+- 默认清单地址是 `https://github.com/tiramission/macast-gpui/releases/latest/download/latest.json`，公钥编译在 [update.rs](crates/macast-app/src/update.rs)；`config.json` 的 `update` 组可覆盖 `endpoint` / `pubkey`（本地联调用）。
+- 发布侧：Installer 工作流在打 tag 时用 secrets `CARGO_PACKAGER_SIGN_PRIVATE_KEY`（必需，另需 `CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD`）给安装包签名，并生成 `latest.json`（内含安装包 `.sig` 的内容）一起挂到 Release。**私钥丢失就再也发不出能被应用接受的更新**。
+
 ## 测试
 
 ```bash

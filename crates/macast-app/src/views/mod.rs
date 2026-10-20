@@ -24,6 +24,8 @@ use std::time::Duration;
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
 
+use crate::update::{self, Update, UpdateEvent, UpdateStage};
+
 // ---- design tokens -------------------------------------------------------
 // Two palettes share the same semantic roles: one accent, status colours only
 // for playback state, three text levels. `Auto` resolves against the OS
@@ -194,6 +196,8 @@ pub struct RootView {
     last_cast_seq: u64,
     /// Timestamp of the last titlebar click, for double-click to maximize.
     last_title_click: Option<std::time::Instant>,
+    /// Update check / download / install progress, shown in the settings panel.
+    update_stage: UpdateStage,
     /// Our window; async state updates go through it instead of
     /// `update_entity` - see [`RootView::init`]. `None` until `init`.
     window_handle: Option<AnyWindowHandle>,
@@ -228,6 +232,7 @@ impl RootView {
             image_seq: 0,
             last_cast_seq: 0,
             last_title_click: None,
+            update_stage: UpdateStage::Idle,
             window_handle: None,
             _appearance_sub: None,
         }
@@ -267,6 +272,152 @@ impl RootView {
                         });
                     });
                 }
+            }
+        })
+        .detach();
+
+        // Look for a newer release once per run. It stays quiet on failure: a
+        // machine without internet (or before the first signed release) should
+        // not be nagged by a check the user never asked for.
+        if self.config.update.check_on_startup {
+            self.check_update(true, cx);
+        }
+    }
+
+    // ---- update check / install -----------------------------------------
+    // See [`crate::update`]: all network work happens on the core's runtime,
+    // results come back as [`UpdateEvent`]s and drive `self.update_stage`.
+
+    /// Start a check. `quiet` keeps failures off the toast (used at startup).
+    fn check_update(&mut self, quiet: bool, cx: &mut Context<Self>) {
+        if matches!(
+            self.update_stage,
+            UpdateStage::Checking | UpdateStage::Downloading { .. } | UpdateStage::Installing(_)
+        ) {
+            return;
+        }
+        self.update_stage = UpdateStage::Checking;
+        cx.notify();
+        let config = self.config.clone();
+        self.run_update_worker(quiet, cx, move |runtime, tx| {
+            update::check(&runtime, &config, tx)
+        });
+    }
+
+    /// Download the release the last check found, then install it.
+    fn install_update(&mut self, cx: &mut Context<Self>) {
+        let UpdateStage::Available(update) = &self.update_stage else {
+            return;
+        };
+        let update = update.clone();
+        self.update_stage = UpdateStage::Downloading {
+            version: update.version.clone(),
+            received: 0,
+            total: None,
+        };
+        cx.notify();
+        self.run_update_worker(false, cx, move |runtime, tx| {
+            update::download(&runtime, *update, tx)
+        });
+    }
+
+    fn toggle_update_check_on_startup(&mut self, cx: &mut Context<Self>) {
+        self.config.update.check_on_startup = !self.config.update.check_on_startup;
+        let label = if self.config.update.check_on_startup {
+            "开启"
+        } else {
+            "关闭"
+        };
+        self.save_config(&format!("启动时检查更新（{label}）"), cx);
+    }
+
+    /// Run `worker` on the core's runtime and pump its events into the stage.
+    fn run_update_worker<F>(&self, quiet: bool, cx: &mut Context<Self>, worker: F)
+    where
+        F: FnOnce(tokio::runtime::Handle, tokio::sync::mpsc::UnboundedSender<UpdateEvent>),
+    {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateEvent>();
+        worker(self.core.handle(), tx);
+        let handle = self.window_handle;
+        cx.spawn(async move |view, cx| {
+            while let Some(event) = rx.recv().await {
+                let Some(handle) = handle else {
+                    return;
+                };
+                let delivered = cx.update_window(handle, |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| this.apply_update_event(event, quiet, cx));
+                });
+                if delivered.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn apply_update_event(&mut self, event: UpdateEvent, quiet: bool, cx: &mut Context<Self>) {
+        match event {
+            UpdateEvent::UpToDate => self.update_stage = UpdateStage::UpToDate,
+            UpdateEvent::Available(update) => {
+                self.set_notice(
+                    format!("发现新版本 v{}，可在设置里更新", update.version),
+                    cx,
+                );
+                self.update_stage = UpdateStage::Available(update);
+            }
+            UpdateEvent::Progress { received, total } => {
+                if let UpdateStage::Downloading { version, .. } = &self.update_stage {
+                    self.update_stage = UpdateStage::Downloading {
+                        version: version.clone(),
+                        received,
+                        total,
+                    };
+                }
+            }
+            UpdateEvent::Downloaded { update, bytes } => self.start_install(*update, bytes, cx),
+            UpdateEvent::Failed(e) => {
+                tracing::warn!("update: {e}");
+                if !quiet {
+                    self.set_notice(e.clone(), cx);
+                }
+                self.update_stage = UpdateStage::Failed(e);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Shut the DLNA side down the way the normal quit path does (SSDP byebye,
+    /// mpv teardown), then let the installer replace us and restart the app.
+    /// On success `Update::install` exits the process and never comes back.
+    fn start_install(&mut self, update: Update, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        self.update_stage = UpdateStage::Installing(update.version.clone());
+        cx.notify();
+
+        let core = self.core.clone();
+        let handle = self.window_handle;
+        cx.spawn(async move |view, cx| {
+            // `tokio::time::timeout` needs the runtime context, which gpui's
+            // executor does not provide, so the shutdown (with its timeout) runs
+            // as a task on the core's runtime and this task only joins it.
+            let runtime = core.handle();
+            let shutdown = runtime.spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(2), core.shutdown()).await;
+            });
+            let _ = shutdown.await;
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateEvent>();
+            update::install(&runtime, update, bytes, tx);
+            // Only reached when the installer could not even be started.
+            while let Some(UpdateEvent::Failed(e)) = rx.recv().await {
+                let Some(handle) = handle else {
+                    return;
+                };
+                let _ = cx.update_window(handle, |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.update_stage = UpdateStage::Failed(e);
+                        cx.notify();
+                    });
+                });
             }
         })
         .detach();
@@ -831,6 +982,7 @@ impl Render for RootView {
                 &s.ips,
                 self.autostart,
                 runtime_backend,
+                &self.update_stage,
                 cx,
             ));
         }
@@ -1593,6 +1745,7 @@ fn settings_panel(
     ips: &[String],
     autostart: bool,
     runtime_backend: &str,
+    update_stage: &UpdateStage,
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
     // mpv is loaded in-process (libmpv) and rendered inside the window; the
@@ -1691,6 +1844,10 @@ fn settings_panel(
             ],
         ))
         .child(section(
+            "更新",
+            update_rows(config.update.check_on_startup, update_stage, cx),
+        ))
+        .child(section(
             "设备",
             vec![
                 setting_row("名称", div().child(config.device.friendly_name.clone())),
@@ -1767,6 +1924,120 @@ fn settings_panel(
                 )),
         )
         .child(body)
+}
+
+/// Rows of the 更新 section: what we run, when we look for updates, and the
+/// result of the last check / download.
+fn update_rows(
+    check_on_startup: bool,
+    stage: &UpdateStage,
+    cx: &mut Context<RootView>,
+) -> Vec<Div> {
+    let busy = matches!(
+        stage,
+        UpdateStage::Checking | UpdateStage::Downloading { .. } | UpdateStage::Installing(_)
+    );
+
+    let check: AnyElement = if busy {
+        div()
+            .text_size(px(11.5))
+            .text_color(rgb(p().dim))
+            .child("…")
+            .into_any_element()
+    } else {
+        text_button(
+            "check-update",
+            "检查",
+            None,
+            cx.listener(|this, _, _, cx| this.check_update(false, cx)),
+        )
+        .into_any_element()
+    };
+
+    vec![
+        setting_row(
+            "当前版本",
+            div().child(format!("v{}", update::current_version())),
+        ),
+        setting_row(
+            "启动时检查",
+            switch(
+                "switch-check-updates",
+                check_on_startup,
+                cx.listener(|this, _, _, cx| this.toggle_update_check_on_startup(cx)),
+            ),
+        ),
+        setting_row("检查更新", check),
+        update_status(stage, cx),
+    ]
+}
+
+/// One line under the check button: the result, the download progress, or the
+/// release notes plus the install button.
+fn update_status(stage: &UpdateStage, cx: &mut Context<RootView>) -> Div {
+    let line = |text: String, color: u32| {
+        div()
+            .text_size(px(11.0))
+            .line_height(px(17.0))
+            .text_color(rgb(color))
+            .child(text)
+    };
+
+    match stage {
+        UpdateStage::Idle => line("尚未检查更新".to_string(), p().dim),
+        UpdateStage::Checking => line("正在检查…".to_string(), p().dim),
+        UpdateStage::UpToDate => line("已是最新版本".to_string(), p().success),
+        UpdateStage::Failed(e) => line(e.clone(), p().warn),
+        UpdateStage::Installing(version) => {
+            line(format!("正在安装 v{version}，应用即将重启"), p().accent)
+        }
+        UpdateStage::Downloading {
+            received, total, ..
+        } => {
+            let text = match total {
+                Some(total) if *total > 0 => format!(
+                    "下载中 {:.0}%（{} / {}）",
+                    *received as f64 * 100.0 / *total as f64,
+                    update::human_size(*received),
+                    update::human_size(*total)
+                ),
+                _ => format!("下载中 {}…", update::human_size(*received)),
+            };
+            line(text, p().accent)
+        }
+        UpdateStage::Available(update) => {
+            let mut column = div().flex().flex_col().gap_2().child(
+                div()
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(rgb(p().accent))
+                    .child(format!("发现新版本 v{}", update.version)),
+            );
+            if let Some(notes) = update
+                .body
+                .as_deref()
+                .map(str::trim)
+                .filter(|notes| !notes.is_empty())
+            {
+                column = column.child(
+                    div()
+                        .max_h(px(88.0))
+                        .overflow_hidden()
+                        .text_size(px(11.0))
+                        .line_height(px(17.0))
+                        .text_color(rgb(p().dim))
+                        .child(notes.chars().take(240).collect::<String>()),
+                );
+            }
+            column.child(text_button(
+                "install-update",
+                "下载并安装",
+                None,
+                cx.listener(|this, _, _, cx| this.install_update(cx)),
+            ))
+        }
+    }
+    .pt_1()
 }
 
 fn section(label: &'static str, rows: Vec<Div>) -> Div {

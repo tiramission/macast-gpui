@@ -102,6 +102,31 @@ impl Default for UiConfig {
     }
 }
 
+/// In-app update checking (backed by `cargo-packager-updater`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    /// Look for a newer release shortly after startup.
+    #[serde(default = "default_true")]
+    pub check_on_startup: bool,
+    /// Update manifest URL. `None` = the built-in GitHub Releases manifest. The
+    /// updater expands `{{target}}`, `{{arch}}` and `{{current_version}}` in it.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// minisign public key (base64). `None` = the built-in release key.
+    #[serde(default)]
+    pub pubkey: Option<String>,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            check_on_startup: true,
+            endpoint: None,
+            pubkey: None,
+        }
+    }
+}
+
 /// SSDP announcement tuning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
@@ -132,6 +157,8 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(default)]
     pub network: NetworkConfig,
+    #[serde(default)]
+    pub update: UpdateConfig,
 }
 
 fn default_notify_secs() -> u64 {
@@ -239,6 +266,9 @@ mod tests {
         assert!(cfg.ui.tray_enabled);
         assert_eq!(cfg.network.ssdp_notify_secs, 30);
         assert_eq!(cfg.network.max_age, 1800);
+        assert!(cfg.update.check_on_startup);
+        assert!(cfg.update.endpoint.is_none());
+        assert!(cfg.update.pubkey.is_none());
         assert_eq!(cfg.device.port, 5069);
     }
 

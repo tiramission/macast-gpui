@@ -35,17 +35,51 @@ jobs:
 
       # scripts/installer.ps1 builds the release binary, points GPUI_FXC_PATH at
       # the SDK's fxc.exe, and runs `cargo packager -p macast-app -f nsis -r`.
-      - name: Build installer
+      #
+      # The signing key is what makes the in-app updater work at all: the
+      # manifest below advertises a minisign signature, and the app refuses to
+      # install anything it cannot verify against the matching public key
+      # (compiled into crates/macast-app/src/update.rs).
+      - name: Build and sign installer
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: powershell -ExecutionPolicy Bypass -File scripts/installer.ps1
+
+      # The manifest the app polls at releases/latest/download/latest.json: the
+      # installer's download URL plus the signature of that exact file.
+      - name: Write update manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw "no installer in dist/" }
+          $signature = Get-Content -Raw "$($installer.FullName).sig"
+          $manifest = [ordered]@{
+            version   = '${{ github.ref_name }}'.TrimStart('v')
+            notes     = '更新内容见 GitHub 的 Release 页面。'
+            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            url       = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($installer.Name)"
+            signature = $signature
+            format    = 'nsis'
+          }
+          $manifest | ConvertTo-Json | Set-Content -NoNewline dist/latest.json
+          Get-Content -Raw dist/latest.json
 
       - uses: actions/upload-artifact@v7
         with:
           name: macast-gpui-windows-installer
-          path: dist/*-setup.exe
+          path: |
+            dist/*-setup.exe
+            dist/*-setup.exe.sig
+            dist/latest.json
 
       - name: Attach the installer to the release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/*-setup.exe
+          files: |
+            dist/*-setup.exe
+            dist/*-setup.exe.sig
+            dist/latest.json
           generate_release_notes: true

@@ -56,6 +56,9 @@ tracing-subscriber = "0.3"
 arboard = "3"
 url = { workspace = true }
 alhazen-gpui = { version = "0.6", features = ["http", "media-foundation", "audio-output", "native"] }
+# In-app updates. Pinned like cargo-packager itself: the crate speaks a fixed
+# manifest/signature format, and its versions do not track the packager CLI.
+cargo-packager-updater = "=0.2.3"
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.26"

@@ -510,11 +510,29 @@ powershell -ExecutionPolicy Bypass -File scripts\installer.ps1
   `icons` / `out_dir`）与 `[package.metadata.packager.nsis]`（`installer-icon`、`languages`、
   `display-language-selector`）。**注意**：顶层 `name` 必须等于 Cargo 包名（或干脆不写），
   写了别的值会让 cargo-packager 认为"没有可打包的配置"。
-- 默认 `installer-mode = currentUser`：装到 `%LOCALAPPDATA%\Macast-Gpui`，**不弹 UAC**；模板自带桌面 +
+- 默认 `installer-mode = currentUser`：装到 `%LOCALAPPDATA%\Programs\Macast-Gpui`，**不弹 UAC**；模板自带桌面 +
   开始菜单快捷方式与卸载项，`license_file` 会把 LICENSE 一并装进目录。
+- `template = nsis/installer.nsi` 换成仓库里那份 cargo-packager 模板（`crates/macast-app/nsis/installer.nsi`）：
+  默认目录指向 `%LOCALAPPDATA%\Programs`，重装时只有上次的目录里还有 `macast-gpui.exe` 才复用，
+  卸载时顺带删掉记录的安装路径——否则向导会沿用陈旧的路径（曾出现过 `%TEMP%\...`）。
+  升级 cargo-packager 时要同步这个文件。
 - NSIS 由 cargo-packager 首次运行时自动下载（缓存在 `%LOCALAPPDATA%\.cargo-packager\NSIS`），
   无需单独安装；`-Msi`（WiX）才需要 WiX Toolset。
 - 已验证：解包载荷含 `macast-gpui.exe` + `uninstall.exe` + LICENSE，图标与中英双语选择正常。
+
+### 7.2 应用内更新（cargo-packager-updater）
+
+代码在 `crates/macast-app/src/update.rs`，UI 在设置面板的「更新」一节：
+检查 → 提示 → 用户确认后下载 → **minisign 验签** → 用 `/P /R` 交给 NSIS 安装包（进度条 + 自动重启），应用自身先退出。
+
+- 清单（单平台形态）：`{version, notes?, pub_date?, url, signature, format:"nsis"}`；`signature` 就是安装包 `.sig` 文件的内容，
+  `url` 指向安装包本体（不是 zip）。地址默认是 `releases/latest/download/latest.json`。
+- 生成密钥（一次即可）：`cargo packager signer generate --path signing.key --password '<密码>'`；
+  打包时设 `CARGO_PACKAGER_SIGN_PRIVATE_KEY`（私钥**文件内容**）与 `CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD`
+  （**密码为空也必须显式传**，否则 cargo-packager 会去读终端密码而卡住），cargo-packager 会顺手写出 `<安装包>.sig`。
+- 公钥写死在 [update.rs](crates/macast-app/src/update.rs) 的 `DEFAULT_PUBKEY` 里；换密钥必须同步改，否则应用一律拒绝安装。
+- 联调：`config.json` 的 `update.endpoint` 指到本地 HTTP 服务（0.2.3 不强制 HTTPS），目录里放安装包 + latest.json 即可。
+
 
 > release 构建带 `windows_subsystem = "windows"`（由 `main.rs` 顶部的 `cfg_attr` 控制）：双击不弹终端，日志写 `%APPDATA%\macast-gpui\logs\macast-gpui.log`。debug 构建仍保留控制台，方便 `cargo run` 看日志。
 

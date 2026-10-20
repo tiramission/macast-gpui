@@ -16,6 +16,8 @@ mod views;
 #[cfg(target_os = "windows")]
 mod tray;
 
+mod update;
+
 #[cfg(target_os = "windows")]
 use views::RootView;
 
