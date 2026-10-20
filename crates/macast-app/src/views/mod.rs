@@ -181,6 +181,15 @@ pub struct RootView {
     alhazen_player: Option<gpui::Entity<VideoPlayer>>,
     /// Whether the alhazen video is in fullscreen mode.
     alhazen_fullscreen: bool,
+    /// A cast asked for fullscreen while the window was hidden (closed to the
+    /// tray) or minimized. gpui 0.2.2 cannot toggle fullscreen in either state,
+    /// so the window is brought back first and the toggle runs once it really
+    /// is on screen again.
+    pending_fullscreen: bool,
+    /// A fullscreen toggle that has been issued but not yet reflected by
+    /// `Window::is_fullscreen()` (gpui applies it on its executor). Another
+    /// toggle in that window would cancel it, so only one may be in flight.
+    fullscreen_pending: Option<bool>,
     /// Esc key state from the previous frame, for edge detection.
     esc_was_down: bool,
     /// Last mpv frame image, so the next one can drop it from the atlas.
@@ -226,6 +235,8 @@ impl RootView {
             volume_bounds: Rc::new(Cell::new(Bounds::default())),
             alhazen_player: None,
             alhazen_fullscreen: false,
+            pending_fullscreen: false,
+            fullscreen_pending: None,
             esc_was_down: false,
             mpv_slot: Rc::new(Cell::new(None)),
             image: None,
@@ -265,9 +276,26 @@ impl RootView {
                     break;
                 }
                 if let Some(handle) = handle {
-                    let _ = cx.update_window(handle, |_, _, cx| {
+                    let _ = cx.update_window(handle, |_, window, cx| {
                         let _ = view.update(cx, |this, cx| {
+                            // A cast that lands while the window is closed to
+                            // the tray (or minimized) has to bring the window
+                            // back: gpui cannot toggle fullscreen from either
+                            // state, and a hidden window may not be rendering
+                            // at all, so this cannot wait for `render`.
+                            let cast_arrived =
+                                snap.cast_seq != this.snapshot.cast_seq && !snap.uri.is_empty();
                             this.snapshot = snap;
+                            if cast_arrived
+                                && this.config.player.fullscreen_on_cast
+                                && window_needs_reveal(window)
+                            {
+                                tracing::info!(
+                                    "cast arrived while the window is hidden/minimized - restoring it"
+                                );
+                                reveal_window(window);
+                                this.pending_fullscreen = true;
+                            }
                             cx.notify();
                         });
                     });
@@ -542,6 +570,43 @@ impl RootView {
         self.save_config("投屏全屏", cx);
     }
 
+    /// Toggle the window's fullscreen state, one request at a time.
+    ///
+    /// gpui applies the toggle on its executor, so `is_fullscreen()` keeps
+    /// reporting the old state for a frame or two. Issuing a second toggle in
+    /// that window cancels the first one - which is how a "leave fullscreen"
+    /// turned into a per-frame ping-pong (and why Stop sometimes left the
+    /// window fullscreen).
+    fn set_fullscreen(&mut self, window: &mut Window, want: bool) {
+        if self.fullscreen_pending.is_some() || window.is_fullscreen() == want {
+            return;
+        }
+        tracing::info!("fullscreen: {}", if want { "enter" } else { "leave" });
+        self.fullscreen_pending = Some(want);
+        window.toggle_fullscreen();
+    }
+
+    /// Make the window fullscreen for a cast that just arrived.
+    ///
+    /// gpui 0.2.2's `toggle_fullscreen` is a no-op on a window that is not
+    /// visible (it only records a deferred placement the window has already
+    /// consumed), and it repositions with `SWP_NOACTIVATE`, so a minimized
+    /// window stays minimized. Both are exactly the "cast while the window is
+    /// closed/minimized" case, so bring the window back first and defer the
+    /// toggle to a later frame - `reveal_window` is asynchronous.
+    fn enter_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window_needs_reveal(window) {
+            tracing::info!("cast arrived while the window is hidden/minimized - restoring it");
+            reveal_window(window);
+            self.pending_fullscreen = true;
+            // Keep drawing: the deferred toggle happens on a later frame.
+            cx.notify();
+            return;
+        }
+        self.alhazen_fullscreen = true;
+        self.set_fullscreen(window, true);
+    }
+
     fn toggle_tray(&mut self, cx: &mut Context<Self>) {
         self.config.ui.tray_enabled = !self.config.ui.tray_enabled;
         match self.config.save() {
@@ -700,12 +765,21 @@ impl Render for RootView {
         let playing = s.transport_state == TransportState::Playing;
         let has_media = !s.uri.is_empty();
 
+        // Let a toggle that was already issued settle before deciding
+        // anything else: gpui applies it asynchronously, so the window state
+        // lags by a frame or two. A pending toggle is stale once the window
+        // disappears (gpui drops it for invisible windows).
+        if let Some(target) = self.fullscreen_pending {
+            if window.is_fullscreen() == target || window_needs_reveal(window) {
+                self.fullscreen_pending = None;
+            }
+        }
+
         // Leave fullscreen when the flag is cleared (Esc) or playback ended.
         // Only the alhazen cast flow puts the window into fullscreen, so any
         // fullscreen window without the flag should exit it.
         if !self.alhazen_fullscreen && window.is_fullscreen() {
-            tracing::info!("leave fullscreen (flag cleared)");
-            window.toggle_fullscreen();
+            self.set_fullscreen(window, false);
         }
 
         // Esc leaves the alhazen fullscreen mode - and ONLY that: nothing
@@ -769,15 +843,32 @@ impl Render for RootView {
         // Alhazen backend: create a VideoPlayer entity for the current cast.
         // When fullscreen is enabled, make the gpui window fullscreen too.
         if is_inline && self.config.player.fullscreen_on_cast {
-            let new_cast = has_media && s.cast_seq != self.last_cast_seq;
-            if new_cast && !window.is_fullscreen() {
-                tracing::info!(
-                    "enter fullscreen: cast_seq {} -> {}",
-                    self.last_cast_seq,
-                    s.cast_seq
-                );
-                window.toggle_fullscreen();
-                self.alhazen_fullscreen = true;
+            // A cast that arrived while the window was hidden or minimized
+            // queued its fullscreen here: `reveal_window` posts the command to
+            // Windows, so the toggle only works once it has been processed.
+            if self.pending_fullscreen {
+                if !has_media {
+                    // The cast ended before the window ever came back.
+                    self.pending_fullscreen = false;
+                } else if !window_needs_reveal(window) {
+                    self.pending_fullscreen = false;
+                    self.alhazen_fullscreen = true;
+                    self.set_fullscreen(window, true);
+                }
+            } else if has_media && s.cast_seq != self.last_cast_seq {
+                // A new cast arrived while the window was already on screen.
+                if window.is_fullscreen() {
+                    // Already fullscreen from an earlier cast: the window
+                    // itself only has to come back on screen.
+                    reveal_window(window);
+                } else {
+                    tracing::info!(
+                        "enter fullscreen: cast_seq {} -> {}",
+                        self.last_cast_seq,
+                        s.cast_seq
+                    );
+                    self.enter_fullscreen(window, cx);
+                }
             }
         }
         if is_image {
@@ -797,10 +888,8 @@ impl Render for RootView {
                 );
             if stopped {
                 self.alhazen_player = None;
-                if window.is_fullscreen() {
-                    window.toggle_fullscreen();
-                    self.alhazen_fullscreen = false;
-                }
+                self.alhazen_fullscreen = false;
+                self.set_fullscreen(window, false);
             } else if s.cast_seq != self.last_cast_seq {
                 self.last_cast_seq = s.cast_seq;
                 let source = Source::parse(&s.uri)
@@ -863,17 +952,15 @@ impl Render for RootView {
                     s.transport_state,
                     TransportState::Stopped | TransportState::NoMediaPresent
                 );
-            if stopped && window.is_fullscreen() {
-                window.toggle_fullscreen();
+            if stopped {
                 self.alhazen_fullscreen = false;
+                self.set_fullscreen(window, false);
             }
         } else {
             self.alhazen_player = None;
             if self.alhazen_fullscreen {
                 self.alhazen_fullscreen = false;
-                if window.is_fullscreen() {
-                    window.toggle_fullscreen();
-                }
+                self.set_fullscreen(window, false);
             }
         }
 
@@ -1124,6 +1211,51 @@ pub(crate) fn window_handle_of(window: &Window) -> Option<windows::Win32::Founda
     }
     None
 }
+
+/// Whether the window is in a state gpui 0.2.2 cannot make fullscreen: hidden
+/// (closed to the tray) or minimized. `WindowsWindow::toggle_fullscreen` bails
+/// out when `IsWindowVisible` is false, and it positions the window with
+/// `SWP_NOACTIVATE`, so a minimized window keeps sitting in the taskbar.
+#[cfg(target_os = "windows")]
+fn window_needs_reveal(window: &Window) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible};
+    match window_handle_of(window) {
+        Some(hwnd) => unsafe { IsIconic(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() },
+        None => false,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn window_needs_reveal(_window: &Window) -> bool {
+    false
+}
+
+/// Ask Windows to bring a hidden/minimized window back onto the screen.
+///
+/// Asynchronous on purpose: the synchronous `ShowWindow` re-enters gpui's
+/// message handler while it still holds state borrows (RefCell panic) and the
+/// surface never resizes. Both commands are posted in order, so a window that
+/// is hidden *and* minimized ends up shown and restored.
+#[cfg(target_os = "windows")]
+fn reveal_window(window: &Window) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsIconic, IsWindowVisible, ShowWindowAsync, SW_RESTORE, SW_SHOW,
+    };
+    let Some(hwnd) = window_handle_of(window) else {
+        return;
+    };
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindowAsync(hwnd, SW_SHOW);
+        }
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn reveal_window(_window: &Window) {}
 
 fn toggle_maximize(window: &mut Window) {
     #[cfg(target_os = "windows")]
