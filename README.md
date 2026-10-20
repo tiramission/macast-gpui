@@ -22,9 +22,9 @@ macast-gpui/
 - **完整 MediaRenderer 设备**：`/description.xml` + 三个服务（AVTransport / RenderingControl / ConnectionManager）的 SCPD 描述
 - **SOAP 控制**：`SetAVTransportURI`（含 DIDL-Lite 元数据标题解析）、`Play/Pause/Stop/Seek`、音量/静音、`GetProtocolInfo` 等全部查询动作
 - **GENA 事件订阅**：SUBSCRIBE/UNSUBSCRIBE/续期，初始全量推送 + `LastChange` 增量推送
-- **两种播放后端**（`Player` trait，可插拔）：
-  - **alhazen（默认）**：进程内解码，画面通过 gpui `video_view()` 直接画在 Now Playing 卡片里，不弹外部窗口；Windows 走 Media Foundation DXVA 硬件解码
-  - **mpv**：外部 mpv 进程 + JSON IPC（与 Macast 同方案），属性观察实时回传进度/时长/播放状态
+- **两种窗口内播放后端**（`Player` trait，可插拔；都不弹外部窗口，画面直接画在 Now Playing 卡片里）：
+  - **alhazen（默认）**：纯进程内解码（alhazen-core），画面走 gpui `video_view()`；Windows 走 Media Foundation DXVA 硬件解码，**零外部依赖**
+  - **mpv**：进程内加载 `libmpv-2.dll`（libmpv + JSON 控制/事件），画面用 mpv 的 SW render API 渲成 BGRA 帧再交给 gpui `paint_image`；**不需要 `mpv.exe`**
 - **gpui 界面（影音控制台）**：自绘标题栏、Now Playing 大卡片、悬浮控制栏、侧滑设置面板、矢量图标（canvas 绘制，无图片资源）
 - **主题**：亮色 / 暗色 / **自动（默认，跟随系统）**，设置面板切换即时生效
 - **设置面板**：显示「当前运行」的后端；切换 alhazen / mpv（重启后生效），可一键打开 `config.json`、开关 Windows 开机自启、开关系统托盘
@@ -41,7 +41,7 @@ macast-gpui/
 
 - Rust stable（建议 ≥ 1.90，开发用的是 1.96）
 - **默认不需要任何外部播放器**：alhazen 后端是进程内解码（Windows 用系统自带的 Media Foundation，H.264/AAC 开箱可用，HEVC 需系统「HEVC 视频扩展」）
-- **可选 mpv**：想用 mpv 引擎/外部窗口时安装，确保 `mpv.exe` 在 PATH，或在配置里写 `mpv_path`
+- **可选 mpv 后端**：只用 alhazen 时不需要。想用 mpv 引擎时提供 `libmpv-2.dll`（放 exe 同目录、加进 `PATH`，或用 `player.libmpv_path` 指定）；它是 mpv 的库版本，**不需要 `mpv.exe`**
 
 ### 运行
 
@@ -63,13 +63,9 @@ cargo run -p macast-app
     "port": 5069
   },
   "player": {
-    "kind": "alhazen",            // "alhazen"（默认，窗口内渲染）/ "mpv"
+    "kind": "alhazen",            // "alhazen"（默认，纯 Rust 进程内解码）/ "mpv"（需要 libmpv-2.dll）
     "fullscreen_on_cast": true,   // 每次投屏全屏，Esc 退出全屏（不影响播放）
-    "render_mode": "auto",        // mpv 的显示方式：auto / external / embedded
-    "mpv": {
-      "exe_path": null,           // mpv 程序路径；null = PATH 中查找
-      "libmpv_path": null         // libmpv-2.dll 路径（embedded 模式用）
-    }
+    "libmpv_path": null           // libmpv-2.dll 路径；null = 自动探测（exe 同目录 / PATH）
   },
   "ui": {
     "theme": "auto",              // "auto" / "light" / "dark"
@@ -83,7 +79,7 @@ cargo run -p macast-app
 ```
 
 > 配置按 `device` / `player` / `ui` / `network` 分组，每组都有默认值，文件里只需要写要改的项。
-> `player.render_mode` 目前只有 `external`（外部 mpv 窗口）真正生效，`embedded`（窗口内渲染）的实现方案见 [docs/plan-inwindow-mpv.md](docs/plan-inwindow-mpv.md)。
+> 两种后端都是**窗口内渲染**：alhazen 零依赖，mpv 需要 `libmpv-2.dll`（不再有 `render_mode` / 外部 `mpv.exe` 这一说）。
 
 ### 测试投屏
 
@@ -154,10 +150,11 @@ macast-core（tokio + axum + socket2）
   ├─ services/      AVTransport / RenderingControl / ConnectionManager 动作处理
   ├─ state.rs       UPnP 状态变量 + UI 快照（watch 通道）
   ├─ eventing.rs    GENA 订阅表 + LastChange NOTIFY
-  └─ player/        Player trait ← alhazen.rs（默认）/ mpv.rs（JSON IPC）/ video_host.rs
+  └─ player/        Player trait ← alhazen.rs（默认，进程内解码）/ libmpv.rs（进程内 libmpv + SW render）/ video_host.rs
         │
 macast-app（gpui）── watch::Receiver<PlaybackSnapshot> ──► RootView 重绘
-                  └─ alhazen 后端：VideoPlayer entity → video_view() → 窗口内渲染
+                  ├─ alhazen 后端：VideoPlayer entity → video_view() → 窗口内渲染
+                  └─ mpv 后端：libmpv 渲出的 BGRA 帧 → RenderImage → paint_image → 窗口内渲染
 ```
 
 与 Macast 原版（Python）的模块对应关系见 GUIDE.md §4.1。
@@ -173,19 +170,19 @@ macast-app（gpui）── watch::Receiver<PlaybackSnapshot> ──► RootView 
 - [ ] 应用内文本输入（gpui 0.2.2 无 Input 元素 / IME 支持，需自行实现）
 - [ ] 安装包（见 GUIDE §7）
 - [ ] AirPlay / Chromecast 协议（协议完全不同，工作量大）
-- [x] **视频嵌入 gpui 窗口**：已由 alhazen 后端实现——画面通过 `video_view()` 直接画在 Now Playing 卡片内，不弹外部窗口
-- [ ] mpv 后端也走窗口内渲染：**可行**，方案已落盘 [`docs/plan-inwindow-mpv.md`](docs/plan-inwindow-mpv.md)（libmpv 进程内库 + SW render → gpui `paint_image`）
+- [x] **视频嵌入 gpui 窗口**：alhazen 后端（默认）——画面通过 `video_view()` 直接画在 Now Playing 卡片内，不弹外部窗口
+- [x] **mpv 后端也走窗口内渲染**：已由进程内 libmpv + SW render 实现（`libmpv-2.dll` → BGRA 帧 → gpui `paint_image`），不需要 `mpv.exe`
 
 ### 关于「mpv render API → wgpu 纹理」
 
-Roadmap 里原来的方案（把 mpv 的画面作为 GPU 纹理交给 gpui）在 gpui 0.2.2 上走不通，已改用 alhazen 后端达成同样目标。实测结论：
+Roadmap 里原来的方案（把 mpv 的画面作为 GPU 纹理交给 gpui）在 gpui 0.2.2 上走不通；已由 alhazen 与进程内 libmpv 两个后端用下面这条路径达成同样目标。实测结论：
 
 | 路线 | 结论 |
 |:---|:---|
 | gpui `surface` 元素 | Windows 上是空实现（只支持 macOS 的 `CVPixelBuffer`），喂不进 GPU 纹理 |
 | 子 HWND 内嵌 | gpui 走 DirectComposition，窗口内容合成在子 HWND **之上**，视频被自己窗口盖住 |
-| libmpv 直渲 | 没有接口把外部 GPU 纹理交给 gpui |
-| **alhazen `video_view()`（采用）** | 解码帧 → `RenderImage` → `paint_image` 进 gpui 的 sprite atlas，是 gpui 原生支持的路径；代价是每帧整帧上传，1080p60 满帧、4K60 约 27fps |
+| libmpv 直出 GPU 纹理 | 没有接口把外部 GPU 纹理交给 gpui；改走 libmpv 的 **SW render**（渲成 BGRA 帧）即可复用下面这条路 |
+| **帧 → `RenderImage` → `paint_image`（采用）** | 解码帧进 gpui 的 sprite atlas，是 gpui 原生支持的路径；alhazen 与 mpv 两个后端都走它。代价是每帧整帧上传，1080p60 满帧、4K60 约 27fps |
 
 播放诊断：设 `ALHAZEN_DEBUG=1` 启动，每秒打印 shown fps / paint 耗时 / 丢帧 / 后端；应用日志里可见 `Media Foundation H264: ... (GPU)`。
 

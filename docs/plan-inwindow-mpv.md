@@ -1,10 +1,12 @@
 # 实施方案：mpv 后端窗口内渲染（libmpv SW render）
 
-> 状态：**待实施**（配置已就位，渲染部分未实现）
+> 状态：**已实施**（M1–M4 落地，见提交 `fad15f5`）
 > 目标：让 mpv 后端的画面也画在 gpui 窗口内（与 alhazen 后端体验一致），不再弹外部播放器窗口。
-> **约束（2026-10-20）**：**不新增后端**。`PlayerKind` 仍只有 `alhazen` / `mpv`，窗口内渲染是
-> mpv 后端的一个属性，由 `player.render_mode`（`auto` / `external` / `embedded`）控制。
-> 相关：README「已知边界 / Roadmap」中的「mpv 后端也走窗口内渲染」、`docs/plan-builtin-backend.md`（前一次内嵌尝试）。
+> **落地后的实际形态（与本文早期设计不同）**：不新增后端（`PlayerKind` 仍是 `alhazen` / `mpv`），
+> 也不再需要 `render_mode`——mpv 后端**固定**为进程内 libmpv + SW render；
+> `PlayerKind::Mpv` 直接构造 `player::libmpv::LibmpvPlayer`，配置项是 `player.libmpv_path`。
+> 下文 §3.2 提到的 `PlayerKind::Libmpv` / `render_mode` 属早期设计，已不采用。
+> 相关：README「已知边界 / Roadmap」、`docs/plan-builtin-backend.md`（更早的一次内嵌尝试）。
 
 ## 1. 结论摘要
 

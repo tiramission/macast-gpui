@@ -103,12 +103,11 @@ protocol.set_state_*() → GENA NOTIFY 推给订阅了的手机
 | 异步运行时 | tokio（full） | SSDP/HTTP/IPC 全异步；gpui 主线程只负责渲染，通过 `watch` 通道收快照 |
 | HTTP 框架 | axum 0.8 | 路由/提取器省心；任意方法（SUBSCRIBE）用 `any()` + 手判 |
 | XML | roxmltree（解析）+ `format!`（生成） | 控制报文结构简单，树形 API 比事件 API 好写 |
-| 播放后端 | **外部 mpv 进程 + JSON IPC** | 与 Macast 完全一致：解码/字幕/hwdec/OSC 全部白嫖；也避免 libmpv 在 Windows 的分发麻烦 |
+| 播放后端 | **alhazen（默认，进程内解码）/ 进程内 libmpv（可选）** | 两种都画在 gpui 窗口内；alhazen 零外部依赖，mpv 只需 `libmpv-2.dll`（不需要 `mpv.exe`） |
 | 组播 | socket2 | 需要 `SO_REUSEADDR`、`IP_ADD_MEMBERSHIP`、`IP_MULTICAST_IF` 这些 tokio 不直接暴露的能力 |
 | 剪贴板 | arboard | gpui 0.2 的剪贴板 API 在 View 层不好够到，用独立小 crate 最稳 |
 
-> **为什么不用 libmpv 链接进进程？** 分发时要带 `libmpv.dll` 且构建链复杂；Macast 用独立 mpv 进程 + IPC 是被验证过的方案，复刻优先保真。
-> 若将来想内嵌视频到 gpui 窗口，可用 `rsmpv` crate 的 render API 拿帧再传 wgpu 纹理（工作量较大，见 §9）。
+> **最终方案（已实施）**：视频内嵌 gpui 窗口走 **`RenderImage` → `paint_image`**（`surface` 元素 Windows 空壳、子 HWND 被 DirectComposition 盖住、无 GPU 纹理交接接口）。默认 alhazen 后端（纯进程内解码）用它；mpv 后端也用 libmpv 的 SW render 出 BGRA 帧走同一条路，**无需 `mpv.exe`，但要 `libmpv-2.dll`**。
 
 ---
 
@@ -283,8 +282,8 @@ macast-gpui/
     │       ├── core.rs                 # Engine/MacastCore：装配一切 + 事件桥
     │       └── player/
     │           ├── mod.rs              # Player trait（对应 Macast 的 Renderer 基类）
-    │           ├── mpv.rs              # mpv 进程 + JSON IPC
-    │           ├── alhazen.rs          # alhazen 后端（默认，视频渲染走 gpui video_view）
+    │           ├── alhazen.rs          # alhazen 后端（默认，纯进程内解码，渲染走 gpui video_view）
+    │           ├── libmpv.rs           # mpv 后端（进程内 libmpv + SW render → BGRA 帧）
     │           └── video_host.rs       # VideoHost trait（窗口命令边界）
     └── macast-app/                     # gpui 界面
         └── src/
@@ -297,7 +296,7 @@ macast-gpui/
 | Macast (Python) | 本骨架 (Rust) |
 |---|---|
 | `Renderer` 基类 + `set_media_*` | `player::Player` trait + 同名方法 |
-| `MPVRender`（spawn mpv + IPC） | `player::mpv::MpvPlayer` |
+| `MPVRender`（spawn mpv + IPC） | `player::libmpv::LibmpvPlayer`（进程内 libmpv + SW render） |
 | `DLNAProtocol.call()` 的 SOAP 分发 | `soap::parse_call` + `services::dispatch` |
 | `DLNAProtocol` 状态变量表 | `state::RendererState.vars` |
 | `ObserveClient` / `send_event_callback` | `eventing::EventRegistry` |
@@ -347,14 +346,14 @@ printf 'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover
 
 ### P2 · 端到端播放（SOAP + mpv）
 
-读 `services/avtransport.rs`、`player/mpv.rs`。手机推一个视频，确认：
-- mpv 窗口弹出并播放
+读 `services/avtransport.rs`、`player/`。手机推一个视频，确认：
+- 画面出现在 gpui 窗口内（alhazen 走 `video_view()`，mpv 走 libmpv 渲出的帧）
 - `GetPositionInfo` 返回的进度在走（手机端进度条动）
 - 手机上的播放/暂停/停止/音量能反过来控制
 
-alhazen 后端（默认，`config.json` 的 `"player": "alhazen"`）是进程内解码 + gpui `video_view()` 内嵌渲染，视频画在 Now Playing 卡片里，不弹外部窗口。Windows 上走 Media Foundation DXVA2 硬件解码（默认适配器，Optimus 笔记本上即核显）。播放配置固定 `prefer_hardware=true` + `auto_fallback=false` + `frame_queue_len=16`：防止硬件解码稍慢就静默切到 ffmpeg-cli 软件解码，深队列吸收解码器突发帧。实测 1080p60 满帧 0 丢帧；4K60 受 alhazen-core 0.6.0 逐像素帧回传 + gpui sprite atlas 每帧整帧上传双重限制约 27fps（后续升级 alhazen 或本地 patch 可解）。
+alhazen 后端（默认，`config.json` 的 `player.kind = "alhazen"`）是进程内解码 + gpui `video_view()` 内嵌渲染，视频画在 Now Playing 卡片里，不弹外部窗口。Windows 上走 Media Foundation DXVA2 硬件解码（默认适配器，Optimus 笔记本上即核显）。播放配置固定 `prefer_hardware=true` + `auto_fallback=false` + `frame_queue_len=16`：防止硬件解码稍慢就静默切到 ffmpeg-cli 软件解码，深队列吸收解码器突发帧。实测 1080p60 满帧 0 丢帧；4K60 受 alhazen-core 0.6.0 逐像素帧回传 + gpui sprite atlas 每帧整帧上传双重限制约 27fps（后续升级 alhazen 或本地 patch 可解）。
 
-mpv 后端窗口内渲染的实施方案见 `docs/plan-inwindow-mpv.md`（libmpv + SW render，不需要 mpv.exe，但需要 libmpv-2.dll）。
+mpv 后端也已在窗口内渲染（进程内 libmpv + SW render → `paint_image`），**不需要 `mpv.exe`，但需要 `libmpv-2.dll`**；细节见 README「两种窗口内播放后端」与 `docs/plan-inwindow-mpv.md`（该计划已落地）。
 
 诊断：设 `ALHAZEN_DEBUG=1` 环境变量启动，每秒打印 shown fps / paint 耗时 / 丢帧数 / 当前后端；应用日志里可见 `Media Foundation H264: Microsoft H264 Video Decoder MFT (GPU)`。
 
@@ -494,12 +493,12 @@ cargo build --release -p macast-app
 
 随包分发清单：
 1. `macast-app.exe`
-2. `mpv.exe`（及依赖 dll）——或引导用户单独安装 mpv 并加 PATH
+2. （可选）`libmpv-2.dll` —— 仅 mpv 后端需要；放 exe 同目录或 `PATH`，或用 `player.libmpv_path` 指定。只用 alhazen 时可完全不打包（**推荐**，DLL 约 121 MB）
 3. 首次运行会写 `%APPDATA%\macast-gpui\config.json`（UDN 在这里，**别删**，删了手机会当成新设备）
 
 注意：
 - **防火墙**：首次运行 Windows 会弹"允许访问专用网络"，必须允许，否则 SSDP 应答和 HTTP 都出不去
-- mpv 的 `--force-window=immediate` 保证推音乐时也有窗口（可关）
+- mpv 后端的画面来自进程内 libmpv，不再有外部窗口；找不到 `libmpv-2.dll` 时回退 alhazen
 - 想静默安装可配 NSIS/WiX，但记得处理防火墙规则（`netsh advfirewall`）
 
 ---
@@ -511,14 +510,14 @@ cargo build --release -p macast-app
 | 手机列表里根本没有我 | AP 隔离 / 防火墙 / 不同网段 / 用了 5GHz 访客网络 | 同网段；看 Windows 防火墙日志；关 AP 隔离 |
 | 能发现但推流没反应 | `POST /AVTransport/action` 404 或 SOAP 命名空间不匹配 | `curl` 直测（§6.3）；看日志有没有 dispatch 到动作 |
 | 手机显示"不支持该格式" | `GetProtocolInfo` 的 Sink 列表太窄 | 用 Macast 的 csv（已内嵌）；或按需增删 mime |
-| 进度不走 / 手机进度条不动 | mpv IPC 没连上；`observe_property` 没发 | 日志看 `mpv backend ready`；确认 mpv.exe 能跑 |
+| 进度不走 / 手机进度条不动 | 播放器事件没回传（mpv 的事件循环 / alhazen 状态同步） | 日志看 `mpv backend ready`（mpv）；用 curl 直测 `GetPositionInfo`（§6.3） |
 | 多网卡时部分设备搜不到 | M-SEARCH 应答从错误网卡出去 | `ssdp.rs` 已按子网选网卡；虚拟机/Hyper-V 虚拟网卡可能干扰，可在 `interfaces()` 过滤 |
 | 换 IP 后手机还连旧地址 | SSDP 缓存（max-age）未过期 | 重启 app 重发 byebye+alive；或调小 `ssdp_notify_secs` |
 | 端口 1900 被占用 | 系统里已有 SSDP 服务 | Windows 下 `SO_REUSEADDR` 可共存；不行就排查其它投屏软件 |
 | 编译 gpui 失败 | 缺 VS C++ 生成工具 / 旧版 Rust | 装 "Desktop development with C++"；用最新 stable |
 | release 报 `Failed to find fxc.exe` | gpui 只查 PATH 和固定版本 SDK | 设 `GPUI_FXC_PATH=...\Windows Kits\10\bin\<ver>\x64\fxc.exe` |
 | 双击启动卡 5–6 秒 | 首帧前同步 spawn 子进程（原 `is_autostart_enabled` 调 `reg.exe`），被杀软/系统拖慢 | 改用 `windows-registry` 直读注册表；不要在 `RootView::new` 里 spawn 进程 |
-| mpv 起不来 | 不在 PATH / 路径带空格 | `mpv_path` 写绝对路径；看启动日志的错误信息 |
+| mpv 后端起不来 | 找不到 `libmpv-2.dll` | 放 exe 同目录 / `PATH`，或用 `player.libmpv_path` 写绝对路径；看启动日志（找不到时会回退 alhazen） |
 
 ### 8.1 gpui 0.2.2 API 备忘（与 Zed 主仓源码有差异，本骨架已验证）
 
@@ -545,11 +544,11 @@ crates.io 上的 `gpui 0.2.2` 是**裁剪版**，和 Zed 主仓的 gpui 不是�
 按投入产出排序：
 
 1. **托盘图标 + 关闭到托盘**（已实现 Windows）：`crates/macast-app/src/tray.rs` 用 `tray-icon` 建图标（运行时生成 32×32 RGBA，无需图片资源），菜单「显示主窗口 / 退出」。gpui 的 Windows 消息循环是 `GetMessageW + DispatchMessageW`，会顺带把 tray-icon 隐藏窗口的消息派发掉，所以不用自己起事件循环。窗口隐藏/恢复通过 `raw-window-handle` 拿 HWND，再调 `ShowWindow(SW_HIDE/SW_SHOW)`；用 `Window::on_window_should_close` 返回 `false` 拦截关闭。macOS 用 `objc2` 建 `NSStatusBar`。
-2. **设置界面**：友好名、端口、播放器后端、mpv 路径、字幕/倍速，全部落 `config.rs`
+2. **设置界面**：友好名、端口、播放器后端、libmpv 路径、字幕/倍速，全部落 `config.rs`
 3. **播放器插件化**：把 `Player` trait 的具械做成"渲染器插件"（对应 Macast-plugins 的思路：IINA/PotPlayer/外部命令），用 dlopen 或子进程 + 简单 RPC
 4. **AirPlay 接收**：协议完全不同（mDNS + FairPlay + NTP），工作量大；可评估集成 `rust-airplay` 类项目或 fork Macast 的音频方案
 5. **Chromecast**：mDNS + CASTV2 over TLS，更重；通常不值得从零做
-6. **视频嵌入 gpui 窗口**（已立项，见 `docs/plan-builtin-backend.md`）：crates.io gpui 0.2.2 的 `surface` 元素 Windows 上是空壳，走 **子 HWND 内嵌 + Windows Media Foundation** 路线；Player 层抽象出 `VideoHost` trait，详见计划文档
+6. **视频嵌入 gpui 窗口**（已实现）：crates.io gpui 0.2.2 的 `surface` 元素 Windows 上是空壳、子 HWND 会被 DirectComposition 盖住，最终走 **解码帧 → `RenderImage` → `paint_image`**——alhazen 后端（默认）与进程内 libmpv 后端都用这条路
 7. **投屏历史 / 自动续播**：`GetPositionInfo` 已有数据，UI 层加个列表即可
 
 ---
